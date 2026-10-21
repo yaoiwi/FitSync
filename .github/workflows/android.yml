@@ -1,0 +1,68 @@
+name: Build Debug APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Miuix 的 class 文件是 Java 21 编译的，JDK 17 跑不了单测
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # miuix-ui 的 AAR 元数据要求 compileSdk >= 37。
+      # runner 上的 sdkmanager 未必认识 android-37，直接下载官方 platform 包更稳。
+      - name: Install Android SDK Platform 37
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ ! -d "$SDK_ROOT/platforms/android-37" ]; then
+            curl -sSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.2_r01.zip
+            unzip -q /tmp/platform-37.zip -d /tmp/platform-37
+            mkdir -p "$SDK_ROOT/platforms"
+            mv /tmp/platform-37/android-37.2 "$SDK_ROOT/platforms/android-37"
+          fi
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT/platforms"
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run JVM unit tests
+        run: ./gradlew :core-data:testDebugUnitTest :app:testDebugUnitTest --stacktrace --no-daemon
+
+      - name: Build debug APK
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload test + build reports on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+            **/build/outputs/logs/**
+          if-no-files-found: ignore
