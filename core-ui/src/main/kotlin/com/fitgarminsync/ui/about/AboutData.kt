@@ -147,6 +147,12 @@ object AboutContent {
                     url = "https://github.com/1812z/HyperIsland",
                     role = "液态玻璃导航栏、页面骨架与滚动动画的参考实现",
                 ),
+                OpenSourceItem(
+                    name = "Miuix 官方示例（IosLiquidGlassNavigationBar）",
+                    license = "Apache-2.0",
+                    url = "https://github.com/YuKongA/miuix",
+                    role = "折射着色器与玻璃高光的上游实现",
+                ),
             ),
         ),
         OpenSourceGroup(

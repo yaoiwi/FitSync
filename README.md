@@ -93,3 +93,5 @@ core-ui/      UI 层：Miuix 主题、液态玻璃、页面骨架、通用组件
 ## 许可证
 
 [GPL-3.0](LICENSE)。你可以使用、修改、分发，但**衍生作品必须同样以 GPL-3.0 开源**，不能闭源分发。
+
+第三方依赖的许可证、以及液态玻璃相关代码的上游来源，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
