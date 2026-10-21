@@ -1,9 +1,11 @@
 # FitGarminSync — 在线构建（GitHub Actions）说明
 
+> 项目整体介绍与本地构建见 [README.md](README.md)，这里只讲「不装电脑、用手机推代码 + 云端出包」的流程。
+
 本工程已内置 GitHub Actions 工作流：
 `.github/workflows/android.yml`
 
-推送代码后，GitHub 会在云端 Linux 机器上自动装 JDK 17 + Android SDK，
+推送代码后，GitHub 会在云端 Linux 机器上自动装 **JDK 21 + Android SDK Platform 37**，
 执行 `./gradlew :app:assembleDebug`，并把生成的 `app-debug.apk` 作为 Artifact 提供下载。
 
 ---

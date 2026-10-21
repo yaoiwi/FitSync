@@ -13,7 +13,8 @@ GIT_USER="你的GitHub用户名"
 REPO="FitGarminSync"
 BRANCH="main"
 
-PROJ="/sdcard/Download/FitGarminSync-Project"
+# 自动定位到脚本所在目录的上一级（工程根），换存放位置也不用改
+PROJ="$(cd "$(dirname "$0")/.." && pwd)"
 
 cd "$PROJ" || { echo "工程目录不存在: $PROJ"; exit 1; }
 
