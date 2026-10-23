@@ -37,6 +37,15 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.2",
+            date = "2026-10-24",
+            highlights = listOf(
+                "修复登录成功后白屏：返回首页时误把首页一起弹出，回退栈为空",
+                "修复 Garmin 网页登录页：顶部返回栏挡住登录表单，改为占位式布局",
+                "登录向导顶部新增返回按钮，底部留出空间避免被按钮条压住",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.1",
             date = "2026-10-23",
             highlights = listOf(

@@ -59,9 +59,17 @@ fun FitSyncRoot() {
             }
             composable(Screen.LoginWizard.route) {
                 LoginWizardScreen(
+                    // 只弹掉登录页，保留首页。之前 inclusive = true 会把首页一起弹出，
+                    // 回退栈空了就出现"登录成功后白屏、杀进程重进才有内容"。
                     onFinished = {
-                        navController.popBackStack(Screen.Home.route, inclusive = true)
+                        // 兜底：万一首页不在栈里（例如被外部深链清过），重新导航一次
+                        if (!navController.popBackStack(Screen.Home.route, inclusive = false)) {
+                            navController.navigate(Screen.Home.route) {
+                                popUpTo(0) { inclusive = true }
+                            }
+                        }
                     },
+                    onCancel = { navController.popBackStack() },
                 )
             }
             composable(Screen.Changelog.route) {

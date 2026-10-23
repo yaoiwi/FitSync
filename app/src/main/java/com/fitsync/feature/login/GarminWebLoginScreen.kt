@@ -42,7 +42,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.fitsync.data.db.AccountRegion
 import com.fitsync.data.network.GarminEndpoints
-import com.fitsync.ui.components.liquidGlass
+import com.fitsync.ui.theme.MiuixCardSurface
+import com.fitsync.ui.theme.MiuixDivider
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuixCanvas
 import com.fitsync.ui.theme.MiuixPrimary
@@ -100,17 +101,67 @@ fun GarminWebLoginScreen(
         }
     }
 
-    val glassTint = if (isSystemInDarkTheme()) {
-        Color(0xFF1C1C1E).copy(alpha = 0.80f)
-    } else {
-        Color.White.copy(alpha = 0.86f)
-    }
-
     FitSyncTheme {
-        Box(modifier = Modifier.fillMaxSize().background(MiuixCanvas)) {
+        // 顶栏 / 网页 / 底栏 三段式：之前顶栏用 align(TopCenter) 浮在网页上，
+        // Garmin 登录页顶部的输入框会被整条盖住，点不到。
+        Column(modifier = Modifier.fillMaxSize().background(MiuixCanvas)) {
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(MiuixCardSurface)
+                    .statusBarsPadding()
+                    .padding(start = 4.dp, end = 12.dp, top = 4.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "←",
+                    fontSize = 22.sp,
+                    color = MiuiText1,
+                    modifier = Modifier
+                        .clickable { onCancel() }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+                Column(modifier = Modifier.weight(1f).padding(start = 2.dp)) {
+                    Text(
+                        text = "登录 Garmin",
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = MiuiText1,
+                    )
+                    Text(
+                        text = when {
+                            loadError != null -> "加载失败 · 可点右侧刷新"
+                            loading -> "正在加载…"
+                            else -> "官方页面 · 密码不经过本应用"
+                        },
+                        fontSize = 11.sp,
+                        color = if (loadError != null) MiuiRed else MiuixSummary,
+                        maxLines = 1,
+                    )
+                }
+                Text(
+                    text = "刷新",
+                    fontSize = 14.sp,
+                    color = MiuixPrimary,
+                    modifier = Modifier
+                        .clickable {
+                            loadError = null
+                            loading = true
+                            webView?.reload()
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(0.5.dp)
+                    .background(MiuixDivider),
+            )
 
             AndroidView(
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.weight(1f).fillMaxWidth(),
                 factory = { context ->
                     WebView(context).apply {
                         webView = this
@@ -182,70 +233,11 @@ fun GarminWebLoginScreen(
                 update = { },
             )
 
-            // 顶部玻璃条：浮在网页上，返回 + 状态 + 刷新
+            // 底栏（占位，不遮挡网页）
             Row(
                 modifier = Modifier
-                    .align(Alignment.TopCenter)
                     .fillMaxWidth()
-                    .liquidGlass(
-                        shape = RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp),
-                        tint = glassTint,
-                        highlightAlpha = 0.35f,
-                    )
-                    .statusBarsPadding()
-                    .padding(start = 6.dp, end = 14.dp, top = 6.dp, bottom = 10.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "←",
-                    fontSize = 22.sp,
-                    color = MiuiText1,
-                    modifier = Modifier
-                        .clickable { onCancel() }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-                Column(modifier = Modifier.weight(1f).padding(start = 4.dp)) {
-                    Text(
-                        text = "登录 Garmin",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = MiuiText1,
-                    )
-                    Text(
-                        text = when {
-                            loadError != null -> "加载失败 · 可点右侧刷新"
-                            loading -> "正在加载…"
-                            else -> "官方页面 · 密码不经过本应用"
-                        },
-                        fontSize = 11.sp,
-                        color = if (loadError != null) MiuiRed else MiuixSummary,
-                        maxLines = 1,
-                    )
-                }
-                Text(
-                    text = "刷新",
-                    fontSize = 14.sp,
-                    color = MiuixPrimary,
-                    modifier = Modifier
-                        .clickable {
-                            loadError = null
-                            loading = true
-                            webView?.reload()
-                        }
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                )
-            }
-
-            // 底部玻璃条
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .fillMaxWidth()
-                    .liquidGlass(
-                        shape = RoundedCornerShape(topStart = 22.dp, topEnd = 22.dp),
-                        tint = glassTint,
-                        highlightAlpha = 0.35f,
-                    )
+                    .background(MiuixCardSurface)
                     .navigationBarsPadding()
                     .padding(horizontal = 16.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically,

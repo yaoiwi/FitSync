@@ -40,6 +40,10 @@ import com.fitsync.ui.components.RegionSegmentedControl
 import com.fitsync.ui.components.RiskConsentCard
 import com.fitsync.ui.components.glassSource
 import com.fitsync.ui.components.liquidGlass
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.icon.MiuixIcons
+import top.yukonga.miuix.kmp.icon.extended.Back
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiAccent
 import com.fitsync.ui.theme.MiuiRed
@@ -57,6 +61,7 @@ import com.fitsync.ui.theme.MiuixSummary
 @Composable
 fun LoginWizardScreen(
     onFinished: () -> Unit,
+    onCancel: () -> Unit = {},
     viewModel: LoginWizardViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -134,6 +139,11 @@ fun LoginWizardScreen(
                 MiuixLargeHeader(
                     title = "添加账号",
                     subtitle = "Garmin 中国区 / 国际区可同时登录，数据在本地合并",
+                    navigationIcon = {
+                        IconButton(onClick = onCancel) {
+                            Icon(MiuixIcons.Back, contentDescription = "返回")
+                        }
+                    },
                 )
 
             Column(
@@ -280,7 +290,8 @@ fun LoginWizardScreen(
                     color = MiuixSummary,
                     modifier = Modifier.padding(horizontal = 20.dp),
                 )
-                Spacer(Modifier.height(16.dp))
+                // 底部操作条是浮层，留出高度，滚到底时最后一行不会被压住
+                Spacer(Modifier.height(96.dp))
                 }
             }
         }

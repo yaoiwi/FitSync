@@ -231,11 +231,24 @@ fun MiuixLargeHeader(
     title: String,
     subtitle: String? = null,
     scrollOffset: Float = 0f,
+    navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val scale = (1f - scrollOffset.coerceIn(0f, 1f) * 0.12f)
-    Column(modifier = Modifier.padding(start = 18.dp, end = 12.dp, top = 18.dp, bottom = 4.dp)) {
+    Column(
+        modifier = Modifier.padding(
+            // 有返回箭头时左边距收窄，箭头本身带内边距，避免标题被挤到屏幕中间
+            start = if (navigationIcon != null) 6.dp else 18.dp,
+            end = 12.dp,
+            top = 10.dp,
+            bottom = 4.dp,
+        ),
+    ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            if (navigationIcon != null) {
+                navigationIcon()
+                Spacer(Modifier.width(2.dp))
+            }
             Text(
                 text = title,
                 fontSize = 30.sp,
