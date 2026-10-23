@@ -37,6 +37,14 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.7",
+            date = "2026-10-24",
+            highlights = listOf(
+                "清理改名遗留的内部标识：版本目录注释、Room schema 旧目录、同步节流的偏好文件名",
+                "仍是同一个应用，只是把最后几处 fitgarminsync 字样的技术细节统一掉",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.6",
             date = "2026-10-24",
             highlights = listOf(

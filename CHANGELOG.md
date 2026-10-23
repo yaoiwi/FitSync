@@ -3,6 +3,16 @@
 > 发版规则：**每次改版本号都必须在这里加一节 + 同步 `core-ui/.../about/AboutData.kt` 的 `changeLogs`**，
 > 应用内「设置 → 关于 → 更新日志」直接读那份数据。两处内容必须一致。
 
+## 0.10.7 — 2026-10-24
+
+- 清理改名后残留的内部标识：
+  - `gradle/libs.versions.toml` 顶部注释 `FitGarminSync version catalog` → `FitSync version catalog`
+  - 删除 Room 导出的旧 schema 目录 `core-data/schemas/com.fitgarminsync.data.db.FitGarminDatabase/`（包名改名后已重新生成 `com.fitsync.data.db.FitSyncDatabase/`）
+  - `SyncCoordinator` 的偏好文件名 `fgs_sync` → `fitsync_sync`（只影响自动同步的 5 分钟节流，升级后会多同步一次）
+  - `HANDOFF.md` 里提到的 `fgs_aliases` 更正为实际的 `fitsync_aliases`
+- 全仓库已无 `fitgarmin` 字样，仅 CHANGELOG 保留改名历史记录
+- 无界面变化
+
 ## 0.10.6 — 2026-10-24
 
 - 移除「设置 → Garmin 官方 API」入口、连接页与 `PersonalApiViewModel`，只保留账号密码 / 导入两条数据通道

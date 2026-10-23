@@ -927,7 +927,7 @@ UI 会显示"上传失败"，此时需要看 Garmin 返回体（下一步可把�
 **昵称**：点账号名（带 ✎ 提示）→ 弹框修改，可「恢复默认」。
 关键约束：**不能改 `accounts.display_name`**——它是 Garmin 的真实用户名，
 被当作 Connect API 的路径参数（`/usersummary-service/usersummary/daily/{displayName}`），
-改了同步会 404。因此昵称存在 `AccountAliasStore`（SharedPreferences `fgs_aliases`），
+改了同步会 404。因此昵称存在 `AccountAliasStore`（SharedPreferences `fitsync_aliases`），
 只影响显示；有自定义昵称时，第二行会附加「原名 xxx」便于对照。
 
 **同步动画**：原来同时出现两个（下拉指示器 + 右上角转圈）。现在：

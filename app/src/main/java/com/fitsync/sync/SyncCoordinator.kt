@@ -44,7 +44,7 @@ class SyncCoordinator @Inject constructor(
         val message: String? = null,
     )
 
-    private val prefs = context.getSharedPreferences("fgs_sync", Context.MODE_PRIVATE)
+    private val prefs = context.getSharedPreferences("fitsync_sync", Context.MODE_PRIVATE)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     private val _state = MutableStateFlow(UiState())
