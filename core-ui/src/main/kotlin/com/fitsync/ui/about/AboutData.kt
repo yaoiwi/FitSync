@@ -40,11 +40,11 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "0.10.8",
+            version = "0.10.9",
             date = "2026-10-24",
             highlights = listOf(
-                "更新日志改为只展示当前版本的改动，不再堆叠历史",
-                "历史版本记录保留在项目仓库的 CHANGELOG.md 里",
+                "开源许可采用 Apache-2.0：支持商用与闭源衍生，含明确专利授权",
+                "新增 NOTICE 文件，致谢页底部补充许可说明",
             ),
         ),
     )

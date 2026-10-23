@@ -1,6 +1,6 @@
 # 第三方组件与许可声明
 
-本项目以 GPL-3.0 发布（见 `LICENSE`）。以下是运行时依赖、构建依赖，以及参考/移植代码的来源与许可。
+本项目以 Apache-2.0 发布（见 `LICENSE`）。以下是运行时依赖、构建依赖，以及参考/移植代码的来源与许可。
 
 ## 一、直接依赖（随 APK 分发）
 
@@ -53,7 +53,7 @@
 
 - Apache-2.0：https://www.apache.org/licenses/LICENSE-2.0
 - MIT：见下方
-- GPL-3.0：见 `LICENSE`
+- Apache-2.0（本项目本体）：见 `LICENSE`
 - FIT Protocol License：https://developer.garmin.com/fit/
 
 ```

@@ -71,6 +71,14 @@ fun AcknowledgementsScreen(onBack: () -> Unit) {
                 }
                 item {
                     Text(
+                        text = "FitSync 本体以 Apache-2.0 发布：可自由使用、修改、分发，"
+                            + "包括商业用途与闭源衍生，保留版权与许可声明即可。",
+                        fontSize = 11.sp,
+                        lineHeight = 16.sp,
+                        color = MiuixSummary,
+                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                    )
+                    Text(
                         text = "本应用与 Garmin Ltd. 无隶属关系；Garmin 是 Garmin Ltd. 的注册商标。",
                         fontSize = 11.sp,
                         lineHeight = 16.sp,
