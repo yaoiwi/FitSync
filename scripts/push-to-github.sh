@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # ============================================================
-# FitGarminSync 推送到 GitHub
+# FitSync 推送到 GitHub
 #
 # 用法：
 #   bash scripts/push-to-github.sh <GitHub用户名> [仓库名]
 #
 # 例：
 #   bash scripts/push-to-github.sh zhangsan
-#   bash scripts/push-to-github.sh zhangsan FitGarminSync
+#   bash scripts/push-to-github.sh zhangsan FitSync
 #
 # 前提（二选一）：
 #   A. 装了 gh 并已登录  -> 脚本会自动建仓库
@@ -17,7 +17,7 @@
 set -eu
 
 GIT_USER="${1:-}"
-REPO="${2:-FitGarminSync}"
+REPO="${2:-FitSync}"
 BRANCH="main"
 
 if [ -z "$GIT_USER" ]; then

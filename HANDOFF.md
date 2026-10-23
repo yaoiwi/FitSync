@@ -1,4 +1,4 @@
-# FitGarminSync — 项目交接文档（HANDOFF）
+# FitSync — 项目交接文档（HANDOFF）
 
 > 本文件用于跨工具/跨 AI 交接。接手方读完这一份即可继续开发，无需翻聊天记录。
 
@@ -6,7 +6,7 @@
 
 1. `app/build.gradle.kts`：`versionCode` +1、`versionName` 递进。
 2. `CHANGELOG.md`：顶部新增一节（版本号 + 日期 + 变更要点）。
-3. `core-ui/src/main/kotlin/com/fitgarminsync/ui/about/AboutData.kt`：`changeLogs` 最前面插入同一条记录
+3. `core-ui/src/main/kotlin/com/fitsync/ui/about/AboutData.kt`：`changeLogs` 最前面插入同一条记录
    （**应用内「设置 → 关于 → 更新日志」读的就是这里**，漏了用户就看不到）。
 4. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组。
 5. 构建 + 跑 `:app:testDebugUnitTest`，确认全绿再打包。
@@ -15,7 +15,7 @@
 
 ## 一、项目是什么
 
-Android 应用 **FitGarminSync**：多平台健康数据聚合器，是 DailySync 移动端的原生复刻。
+Android 应用 **FitSync**：多平台健康数据聚合器，是 DailySync 移动端的原生复刻。
 
 核心定位：
 - 通过**账号登录**（非 Health Connect）获取数据
@@ -26,7 +26,7 @@ Android 应用 **FitGarminSync**：多平台健康数据聚合器，是 DailySyn
 ## 二、工程位置与结构
 
 ```
-/storage/emulated/0/Download/FitGarminSync-Project/
+/storage/emulated/0/Download/FitSync-Project/
 ├── .github/workflows/android.yml   # GitHub Actions 在线构建 APK
 ├── README-BUILD.md                 # 在线构建操作说明
 ├── HANDOFF.md                      # 本文件
@@ -158,7 +158,7 @@ pkg install git -y
 bash scripts/push-to-github.sh   # 先改脚本里的 GIT_USER
 ```
 
-然后打开 `https://github.com/<用户名>/FitGarminSync/actions` → `Build Debug APK` → `Run workflow`。
+然后打开 `https://github.com/<用户名>/FitSync/actions` → `Build Debug APK` → `Run workflow`。
 产物在运行的 Artifacts 里，下载 `app-debug.zip` 解压即得 APK。
 
 ### 方式 B：电脑本地
@@ -221,14 +221,14 @@ bash scripts/push-to-github.sh   # 先改脚本里的 GIT_USER
 |---|---|---|---|
 | 1 | `@Index([...])` 位置参数被 KAPT 生成为 `{{"a"}}` 非法注解值，全部 Entity 编译失败 | `Entities.kt` | 改为 `@Index(value = [...])` |
 | 2 | `accounts` 索引用了 Kotlin 属性名（camelCase），与 `@ColumnInfo` 的 snake_case 列名不一致 | `Entities.kt` | 改为 `external_user_id` / `source_type` |
-| 3 | `@TypeConverters` 打在容器类 `Converters` 上，且 DB 引用无转换方法的容器类 | `Converters.kt` / `FitGarminDatabase.kt` | DB 直接引用 `StringTypeConverter`、`LongStringConverter` |
+| 3 | `@TypeConverters` 打在容器类 `Converters` 上，且 DB 引用无转换方法的容器类 | `Converters.kt` / `FitSyncDatabase.kt` | DB 直接引用 `StringTypeConverter`、`LongStringConverter` |
 | 4 | `exportSchema = true` 但未给 `room.schemaLocation` | `core-data/build.gradle.kts` | 补 kapt 参数，schema 输出到 `core-data/schemas/` |
 | 5 | `EncryptedFile.Builder(File, MasterKey, scheme)` 签名不存在；`AES256_GCM` 枚举不存在；对 EncryptedFile 调 `readBytes/writeBytes` | `CredentialVault.kt` | 改 4 参构造 + `AES256_GCM_HKDF_4KB`，读写改 `openFileInput/Output`，方法加 `@Synchronized` |
 | 6 | 4 个块体函数缺少 `return`；`substringAfter(limit=)` 无此重载 | `GarminSsoClient.kt` | 补 `return` / 去掉非法参数 |
 | 7 | 对 `val` 形参 `result` 重新赋值 | `LoginWizardViewModel.kt` | 形参改 `ssoResult`，函数内 `var result` |
 | 8 | 缺 `sp` 导入 | `LoginWizardComponents.kt` | 补 `androidx.compose.ui.unit.sp` |
 | 9 | `TextRange` 包名错；`rememberFocusRequester()` 在 Compose 1.6.8 不存在；`showVerticalCursor` 非 KeyboardOptions 参数；`Pair` 传 3 参；`FontWeight.Extrabold` 拼写错 | `MfaAndRegionComponents.kt` / `LoginWizardComponents.kt` | 改 `androidx.compose.ui.text.TextRange`、`remember { FocusRequester() }`、`Triple`、`ExtraBold` |
-| 10 | `import androidx.navigation.compose.Composable` 不存在 | `FitGarminNavHost.kt` | 删除 |
+| 10 | `import androidx.navigation.compose.Composable` 不存在 | `FitSyncNavHost.kt` | 删除 |
 | 11 | 冷 Flow 调 `collectAsStateWithLifecycle()` 缺 `initialValue` | `HomeScreen.kt` | 补 `initialValue = emptyList()` |
 
 **真机验证（2026-10-18）**：中国区、国际区两个账号均已登录成功，`access_token` / `refresh_token`
@@ -250,13 +250,13 @@ URL 多了一层 `/sso` → `EncryptedFile` 无法覆盖写 → `PHONE_REGISTRAT
 真机上一打开就闪退，但沙箱没有可用模拟器（x86 镜像需要 KVM，ARM64 镜像不支持 x86 主机），
 所以先补齐了两样基础设施，让崩溃可定位、回归可验证：
 
-1. **崩溃栈落盘 + 上报页**（`FitGarminSyncApp.kt` / `CrashReportScreen.kt`）
+1. **崩溃栈落盘 + 上报页**（`FitSyncApp.kt` / `CrashReportScreen.kt`）
    - 全局 `UncaughtExceptionHandler` 把栈**写进内部存储 `crash-last.txt`**
      （崩溃后进程立刻被杀，只放内存里必然丢失）；
    - 下次冷启动先展示崩溃页，提供 **复制 / 分享 / 忽略进入** 三个按钮，
      可以直接用系统分享把栈发到微信或邮件，不需要连电脑开 logcat。
 
-2. **JVM 冒烟测试**（`app/src/test/java/com/fitgarminsync/HomeSmokeTest.kt`，Robolectric）
+2. **JVM 冒烟测试**（`app/src/test/java/com/fitsync/HomeSmokeTest.kt`，Robolectric）
    - 建内存库写入账号并读回流（验证 19 张表 DDL 真实可执行）；
    - 渲染首页空状态 / 有账号状态。
    - CI 已在 `assembleDebug` 之前执行 `:app:testDebugUnitTest`。
@@ -277,7 +277,7 @@ Lint 缺失类检查（0 error）、首页 Compose 与数据层链路（JVM 实�
 ```
 java.lang.IllegalStateException: CompositionLocal LocalLifecycleOwner not present
   at androidx.lifecycle.compose.FlowExtKt.collectAsStateWithLifecycle(FlowExt.kt:183)
-  at com.fitgarminsync.feature.home.HomeScreenKt.HomeScreen(HomeScreen.kt:42)
+  at com.fitsync.feature.home.HomeScreenKt.HomeScreen(HomeScreen.kt:42)
 ```
 
 **根因：`lifecycle-runtime-compose 2.8.1` 与 `compose-ui 1.6.8`（BOM 2024.06.00）不是一套。**

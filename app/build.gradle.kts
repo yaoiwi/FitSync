@@ -7,15 +7,17 @@ plugins {
 }
 
 android {
-    namespace = "com.fitgarminsync"
+    namespace = "com.fitsync"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.fitgarminsync"
+        // 代码包名是 com.fitsync（决定 R / BuildConfig 的位置），
+        // applicationId 多一级 .app，避免以后上架时与别人的 com.fitsync 冲突。
+        applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "0.9.15"
+        versionCode = 38
+        versionName = "0.10.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

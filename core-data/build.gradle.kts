@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.fitgarminsync.data"
+    namespace = "com.fitsync.data"
     compileSdk = 37
 
     defaultConfig {

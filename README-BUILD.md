@@ -1,4 +1,4 @@
-# FitGarminSync — 在线构建（GitHub Actions）说明
+# FitSync — 在线构建（GitHub Actions）说明
 
 > 项目整体介绍与本地构建见 [README.md](README.md)，这里只讲「不装电脑、用手机推代码 + 云端出包」的流程。
 
@@ -14,7 +14,7 @@
 
 ### 1. 建仓库
 1. 手机浏览器打开 https://github.com/new
-2. 仓库名填 `FitGarminSync`，选 **Private**（私有，代码不外泄）
+2. 仓库名填 `FitSync`，选 **Private**（私有，代码不外泄）
 3. 不要勾选 "Add a README file"，直接 Create
 
 ### 2. 上传工程
@@ -22,7 +22,7 @@
 
 **方式 A：网页上传（推荐，零安装）**
 1. 进仓库 → `Add file` → `Upload files`
-2. 用系统文件选择器进入 `/storage/emulated/0/Download/FitGarminSync-Project`
+2. 用系统文件选择器进入 `/storage/emulated/0/Download/FitSync-Project`
 3. 全选上传（Web 端一次最多 100 个文件，若超限就分批传）
 4. Commit changes
 
@@ -30,11 +30,11 @@
 - MT 管理器本身不带 Git 推送，建议配 Termux：
 ```bash
 pkg install git
-cd /sdcard/Download/FitGarminSync-Project
+cd /sdcard/Download/FitSync-Project
 git init
 git add .
 git commit -m "init"
-git remote add origin https://github.com/<你的用户名>/FitGarminSync.git
+git remote add origin https://github.com/<你的用户名>/FitSync.git
 git push -u origin main
 ```
 

@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.fitgarminsync.ui"
+    namespace = "com.fitsync.ui"
     compileSdk = 37
 
     defaultConfig {

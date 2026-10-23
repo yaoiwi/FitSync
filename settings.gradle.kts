@@ -14,7 +14,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "FitGarminSync"
+rootProject.name = "FitSync"
 include(":app")
 include(":core-data")
 include(":core-ui")

@@ -1,4 +1,4 @@
-# FitGarminSync app ProGuard/R8 rules
+# FitSync app ProGuard/R8 rules
 # 当前阶段先保证 Release 构建可通过；后续接入网络层与序列化库时再补充库规则。
 
 # 保留 Compose/AndroidX 常见运行时反射依赖

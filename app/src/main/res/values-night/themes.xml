@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- 夜间：启动窗口就是黑的，避免冷启动闪一下白屏 -->
-    <style name="Theme.FitGarminSync" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.FitSync" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@android:color/black</item>
         <item name="android:forceDarkAllowed">false</item>
         <item name="android:windowLightStatusBar">false</item>
