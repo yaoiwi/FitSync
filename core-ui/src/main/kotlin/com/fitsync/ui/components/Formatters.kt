@@ -32,28 +32,53 @@ fun formatDurationSeconds(seconds: Long): String {
 
 /** 运动类型 → emoji（无图标资源时的轻量表示） */
 fun sportGlyph(sport: String): String = when (sport.lowercase(Locale.US)) {
-    "running" -> "🏃"
-    "cycling" -> "🚴"
-    "swimming" -> "🏊"
-    "walking" -> "🚶"
-    "hiking" -> "🥾"
-    "strength_training", "strength" -> "🏋"
+    "running", "run", "trail_running", "treadmill_running", "track_running" -> "🏃"
+    "cycling", "bike", "road_biking", "mountain_biking",
+    "indoor_cycling", "gravel_cycling" -> "🚴"
+    "swimming", "swim", "lap_swimming", "open_water_swimming" -> "🏊"
+    "walking", "walk", "casual_walking", "speed_walking" -> "🚶"
+    "hiking", "mountaineering" -> "🥾"
+    "strength_training", "strength", "indoor_cardio", "hiit" -> "🏋"
     "elliptical" -> "🚴"
-    "rowing" -> "🚣"
+    "rowing", "indoor_rowing" -> "🚣"
+    "yoga" -> "🧘"
+    "pilates" -> "🤸"
     else -> "🏅"
 }
 
-/** 运动类型 → 中文名 */
+/**
+ * 运动类型 → 中文名。
+ *
+ * 入参可以是 Garmin 的原始 typeKey（`trail_running`），也可以是同步时归一化后的 `running`。
+ * 未收录的类型把下划线换成空格原样返回，不会出现整串英文代码混在中文列表里。
+ */
 fun sportLabel(sport: String): String = when (sport.lowercase(Locale.US)) {
-    "running" -> "跑步"
-    "cycling" -> "骑行"
-    "swimming" -> "游泳"
-    "walking" -> "步行"
+    "running", "run" -> "跑步"
+    "trail_running" -> "越野跑"
+    "treadmill_running" -> "跑步机"
+    "track_running" -> "场地跑"
+    "cycling", "bike" -> "骑行"
+    "road_biking" -> "公路骑行"
+    "mountain_biking" -> "山地骑行"
+    "indoor_cycling" -> "室内骑行"
+    "gravel_cycling" -> "砾石骑行"
+    "swimming", "swim" -> "游泳"
+    "lap_swimming" -> "泳池游泳"
+    "open_water_swimming" -> "公开水域游泳"
+    "walking", "walk" -> "步行"
+    "casual_walking" -> "散步"
+    "speed_walking" -> "快走"
     "hiking" -> "徒步"
+    "mountaineering" -> "登山"
     "strength_training", "strength" -> "力量训练"
+    "indoor_cardio" -> "室内有氧"
+    "hiit" -> "高强度间歇"
     "elliptical" -> "椭圆机"
-    "rowing" -> "划船"
-    else -> sport.ifBlank { "运动" }
+    "rowing", "indoor_rowing" -> "划船"
+    "yoga" -> "瑜伽"
+    "pilates" -> "普拉提"
+    "other", "unknown" -> "其他运动"
+    else -> sport.ifBlank { "运动" }.replace('_', ' ')
 }
 
 fun regionLabel(region: String): String = when (region) {

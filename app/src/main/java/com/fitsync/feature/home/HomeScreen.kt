@@ -29,8 +29,6 @@ import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -71,10 +69,12 @@ import com.fitsync.ui.components.formatDuration
 import com.fitsync.ui.components.rememberTick
 import com.fitsync.ui.components.regionLabel
 import com.fitsync.ui.components.sportGlyph
+import com.fitsync.ui.components.sportLabel
 import com.fitsync.ui.components.statusColor
 import com.fitsync.ui.components.statusLabel
 import com.fitsync.ui.components.MiuixLeadingIcon
 import com.fitsync.ui.components.MiuixNavItem
+import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixSwitch
@@ -119,6 +119,7 @@ fun HomeScreen(
     val themeMode by remember(context) { ThemeModePref.flow(context) }
         .collectAsState(initial = ThemeModePref.FOLLOW)
     val accounts by viewModel.accounts.collectAsState()
+    val accountsLoaded by viewModel.accountsLoaded.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -188,7 +189,11 @@ fun HomeScreen(
                 )
             }
 
-            if (accounts.isEmpty()) {
+            if (!accountsLoaded) {
+                // 等 Room 返回第一帧。直接画空状态会先闪一下"还没有账号"，
+                // 看起来就像启动时先去了一趟添加账号页。
+                Box(modifier = Modifier.fillMaxSize().background(MiuixCanvas))
+            } else if (accounts.isEmpty()) {
                 EmptyState(onAddAccount = onAddAccount, onImport = pickFile)
             } else {
                 // 玻璃宿主：页面内容录成 backdrop，导航栏放进 overlay（不参与采样）
@@ -527,7 +532,8 @@ private fun ActivityRow(activity: ActivityEntity, onClick: () -> Unit = {}) {
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = activity.activityType.ifBlank { activity.sport },
+                // activityType 是 Garmin 原始 typeKey（如 trail_running），比归一化的 sport 更具体
+                text = sportLabel(activity.activityType.ifBlank { activity.sport }),
                 fontSize = 16.sp,
                 color = MiuiText1,
                 maxLines = 1,
@@ -912,14 +918,11 @@ private fun EmptyState(onAddAccount: () -> Unit, onImport: () -> Unit) {
             lineHeight = 19.sp,
         )
         Spacer(Modifier.height(24.dp))
-        Button(
+        MiuixPrimaryButton(
+            text = "添加数据源",
             onClick = onAddAccount,
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MiuixPrimary),
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-        ) {
-            Text("添加数据源", fontSize = 16.sp)
-        }
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.height(10.dp))
         Text(
             text = "导入本地数据（zip / JSON / CSV）",

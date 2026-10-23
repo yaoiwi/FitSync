@@ -488,8 +488,12 @@ fun ActivityDetailScreen(
                     item {
                         MiuixSectionTitle("记录信息")
                         MiuixCard {
-                            DetailLine("类型代码", activity.activityType.ifBlank { activity.sport })
-                            MiuixDivider()
+                            // 原始 typeKey 只在和中文名不同时才展示，避免「跑步 / running」看起来像两条数据
+                            val rawType = activity.activityType.ifBlank { activity.sport }
+                            if (rawType.isNotBlank() && sportLabel(rawType) != rawType) {
+                                DetailLine("原始类型", rawType)
+                                MiuixDivider()
+                            }
                             DetailLine("GPS 轨迹", if (activity.hasGps) "有" else "无")
                             MiuixDivider()
                             DetailLine("分段数据", if (activity.hasSplits) "有" else "无")

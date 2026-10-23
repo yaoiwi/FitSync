@@ -3,6 +3,7 @@ package com.fitsync
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -194,6 +195,10 @@ class HomeSmokeTest {
 
         renderHome(viewModel)
 
+        // 首帧会先等 Room 返回（accountsLoaded 为 false 时不画空状态），所以要等它切过来
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithText("还没有账号").fetchSemanticsNodes().isNotEmpty()
+        }
         composeRule.onNodeWithText("还没有账号").assertIsDisplayed()
         db.close()
     }
@@ -221,6 +226,10 @@ class HomeSmokeTest {
 
         renderHome(viewModel)
 
+        // 等账号流返回首帧后再操作导航栏
+        composeRule.waitUntil(timeoutMillis = 5_000) {
+            composeRule.onAllNodesWithContentDescription("账号").fetchSemanticsNodes().isNotEmpty()
+        }
         // 账号列表在底部导航的「账号」页，先切过去（导航栏图标的 contentDescription 就是页签名）
         composeRule.onNodeWithContentDescription("账号").performClick()
         composeRule.waitUntil(timeoutMillis = 5_000) {

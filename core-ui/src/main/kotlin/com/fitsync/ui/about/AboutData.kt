@@ -37,6 +37,17 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.4",
+            date = "2026-10-24",
+            highlights = listOf(
+                "修复启动瞬间闪出「还没有账号」页：等数据库返回首帧再决定显示空状态还是主页",
+                "修复活动列表显示英文类型码（running）而详情页显示中文（跑步）的不一致",
+                "运动类型中文映射扩充到 20 余种：越野跑、跑步机、场地跑、山地骑行、室内骑行、泳池游泳、公开水域游泳、散步、快走、登山、室内有氧、HIIT、瑜伽、普拉提等",
+                "活动详情里的原始类型码只在和中文名不同时显示，标签改为「原始类型」",
+                "空状态的「添加数据源」按钮换成 Miuix 风格",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.3",
             date = "2026-10-24",
             highlights = listOf(

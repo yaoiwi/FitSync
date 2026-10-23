@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -40,6 +41,17 @@ class HomeViewModel @Inject constructor(
      */
     val accounts: StateFlow<List<AccountEntity>> = repository.observeEnabledAccounts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /**
+     * 账号列表是否已经读出第一帧。
+     *
+     * 冷启动时 [accounts] 的初始值是空列表，界面会先渲染"还没有账号"，等 Room 查完再切回主页，
+     * 看起来就像"打开先进了添加账号页"。用这个标志把首帧挡掉，等结果回来再决定显示什么。
+     */
+    val accountsLoaded: StateFlow<Boolean> = repository.observeEnabledAccounts()
+        .map { true }
+        .catch { emit(true) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     data class Dashboard(
         val steps: Int = 0,
