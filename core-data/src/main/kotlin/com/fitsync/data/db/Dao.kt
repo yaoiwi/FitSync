@@ -156,6 +156,10 @@ interface ActivityDao {
     @Query("SELECT * FROM activities WHERE id = :id")
     suspend fun getById(id: Long): ActivityEntity?
 
+    /** 同步时定位同一条活动，保证主键稳定（否则 REPLACE 会换 id，采样点会跟丢） */
+    @Query("SELECT * FROM activities WHERE account_id = :a AND external_id = :ext LIMIT 1")
+    suspend fun byExternalId(a: Long, ext: String): ActivityEntity?
+
     @Query("SELECT COUNT(*) FROM activities WHERE account_id = :a")
     suspend fun countByAccount(a: Long): Int
 
@@ -179,6 +183,9 @@ interface ActivitySampleDao {
 
     @Query("SELECT * FROM activity_samples WHERE account_id = :a ORDER BY ts_ms")
     suspend fun byAccount(a: Long): List<ActivitySampleEntity>
+
+    @Query("DELETE FROM activity_samples WHERE activity_id = :id")
+    suspend fun deleteByActivity(id: Long)
 
     @Query("DELETE FROM activity_samples WHERE account_id = :a")
     suspend fun deleteByAccount(a: Long)

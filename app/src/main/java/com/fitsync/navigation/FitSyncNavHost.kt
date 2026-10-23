@@ -16,6 +16,7 @@ import com.fitsync.feature.detail.CopyHealthScreen
 import com.fitsync.feature.detail.ImportScreen
 import com.fitsync.feature.home.HomeScreen
 import com.fitsync.feature.login.LoginWizardScreen
+import com.fitsync.feature.personal.PersonalApiScreen
 import com.fitsync.ui.theme.FitSyncTheme
 
 sealed class Screen(val route: String) {
@@ -27,6 +28,7 @@ sealed class Screen(val route: String) {
     data object Import : Screen("import")
     data object CopyActivities : Screen("copy-activities")
     data object CopyHealth : Screen("copy-health")
+    data object PersonalApi : Screen("personal-api")
 
     companion object {
         const val ACCOUNT_DETAIL = "account/{accountId}"
@@ -52,6 +54,7 @@ fun FitSyncRoot() {
                     onOpenImport = { navController.navigate(Screen.Import.route) },
                     onOpenCopyActivities = { navController.navigate(Screen.CopyActivities.route) },
                     onOpenCopyHealth = { navController.navigate(Screen.CopyHealth.route) },
+                    onOpenPersonalApi = { navController.navigate(Screen.PersonalApi.route) },
                 )
             }
             composable(Screen.LoginWizard.route) {
@@ -95,6 +98,9 @@ fun FitSyncRoot() {
             }
             composable(Screen.CopyHealth.route) {
                 CopyHealthScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Screen.PersonalApi.route) {
+                PersonalApiScreen(onBack = { navController.popBackStack() })
             }
         }
     }

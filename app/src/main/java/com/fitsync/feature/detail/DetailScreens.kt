@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -300,9 +301,12 @@ fun ActivityDetailScreen(
     activityId: Long,
     onBack: () -> Unit,
     viewModel: HomeViewModel = hiltViewModel(),
+    detailViewModel: ActivityDetailViewModel = hiltViewModel(),
 ) {
     val dashboard by viewModel.dashboard.collectAsState()
     val activity = dashboard.activities.firstOrNull { it.id == activityId }
+    val samples by detailViewModel.samples.collectAsState()
+    val routes by detailViewModel.routes.collectAsState()
 
     FitSyncTheme {
         GlassHost(modifier = Modifier.fillMaxSize()) {
@@ -330,6 +334,66 @@ fun ActivityDetailScreen(
                     }
                 } else {
                     item { ActivityHero(activity) }
+
+                    // 有 FIT 数据才显示轨迹与曲线（旧数据来自摘要接口，没有采样点）
+                    if (routes.isNotEmpty()) {
+                        item {
+                            MiuixSectionTitle("轨迹")
+                            MiuixCard {
+                                RouteTrack(
+                                    routes = routes,
+                                    color = MiuixPrimary,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(220.dp)
+                                        .padding(12.dp),
+                                )
+                            }
+                        }
+                    }
+
+                    val hrValues = samples.map { it.hr.toFloat() }.filter { it > 0f }
+                    if (hrValues.size >= 2) {
+                        item {
+                            ChartCard(
+                                title = "心率",
+                                range = "${hrValues.minOrNull()?.toInt()} – ${hrValues.maxOrNull()?.toInt()} bpm",
+                                values = hrValues,
+                                color = Color(0xFFFF4F4F),
+                            )
+                        }
+                    }
+
+                    // 速度只在轨迹点里有（采样表存的是心率/步频/功率/海拔）
+                    val speedValues = routes.map { it.speedMs.toFloat() }.filter { it > 0.3f }
+                    if (speedValues.size >= 2) {
+                        item {
+                            ChartCard(
+                                title = "速度",
+                                range = "%.1f – %.1f km/h".format(
+                                    (speedValues.minOrNull() ?: 0f) * 3.6f,
+                                    (speedValues.maxOrNull() ?: 0f) * 3.6f,
+                                ),
+                                values = speedValues,
+                                color = Color(0xFF3482FF),
+                            )
+                        }
+                    }
+
+                    val elevValues = samples.map { it.elevM.toFloat() }.filter { it != 0f }
+                    if (elevValues.size >= 2) {
+                        item {
+                            ChartCard(
+                                title = "海拔",
+                                range = "%.0f – %.0f m".format(
+                                    elevValues.minOrNull() ?: 0f,
+                                    elevValues.maxOrNull() ?: 0f,
+                                ),
+                                values = elevValues,
+                                color = Color(0xFF34C759),
+                            )
+                        }
+                    }
 
                     item {
                         MiuixSectionTitle("运动数据")
@@ -424,6 +488,33 @@ private fun ActivityHero(activity: ActivityEntity) {
                     color = MiuixSummary,
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun ChartCard(
+    title: String,
+    range: String,
+    values: List<Float>,
+    color: Color,
+) {
+    MiuixSectionTitle(title)
+    MiuixCard {
+        Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontSize = 15.sp, color = MiuiText1)
+                Spacer(Modifier.weight(1f))
+                Text(range, fontSize = 12.sp, color = MiuixSummary)
+            }
+            Spacer(Modifier.height(10.dp))
+            Sparkline(
+                values = values,
+                color = color,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(120.dp),
+            )
         }
     }
 }

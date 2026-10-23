@@ -106,6 +106,7 @@ fun HomeScreen(
     onOpenImport: () -> Unit = {},
     onOpenCopyActivities: () -> Unit = {},
     onOpenCopyHealth: () -> Unit = {},
+    onOpenPersonalApi: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
@@ -297,6 +298,7 @@ fun HomeScreen(
                                 onOpenAccounts = onOpenAccounts,
                                 onOpenChangelog = onOpenChangelog,
                                 onOpenAcknowledgements = onOpenAcknowledgements,
+                                onOpenPersonalApi = onOpenPersonalApi,
                             )
                     }
                 }
@@ -779,6 +781,7 @@ private fun SettingsTab(
     onOpenAccounts: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
     onOpenAcknowledgements: () -> Unit = {},
+    onOpenPersonalApi: () -> Unit = {},
 ) {
     val themeOptions = listOf("跟随系统", "浅色", "深色")
     val themeCodes = listOf(ThemeModePref.FOLLOW, ThemeModePref.LIGHT, ThemeModePref.DARK)
@@ -806,6 +809,13 @@ private fun SettingsTab(
                     trailing = { Text("$accountCount 个", fontSize = 14.sp, color = MiuixSummary) },
                     showArrow = true,
                     onClick = onOpenAccounts,
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "Garmin 官方 API",
+                    summary = "只读 · 用 Personal API Key，不需要账号密码",
+                    showArrow = true,
+                    onClick = onOpenPersonalApi,
                 )
             }
         }

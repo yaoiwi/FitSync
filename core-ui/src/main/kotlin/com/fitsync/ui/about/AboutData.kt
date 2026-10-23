@@ -37,6 +37,16 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.1",
+            date = "2026-10-23",
+            highlights = listOf(
+                "接入 Garmin 官方 Personal API（只读），用 API Key 连接，不需要账号密码",
+                "同步每日汇总与 HRV（含基线），首次同步自动设为主账号",
+                "下载并解析活动完整 FIT 文件：逐秒采样与 GPS 轨迹",
+                "活动详情新增轨迹图与心率 / 速度 / 海拔曲线",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.0",
             date = "2026-10-23",
             highlights = listOf(

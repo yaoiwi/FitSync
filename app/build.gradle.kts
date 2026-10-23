@@ -16,8 +16,8 @@ android {
         applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 38
-        versionName = "0.10.0"
+        versionCode = 39
+        versionName = "0.10.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -54,6 +54,8 @@ kotlin {
 dependencies {
     implementation(project(":core-data"))
     implementation(project(":core-ui"))
+    // 详情页直接查采样点/轨迹表，需要 Room 的类型（core-data 是 implementation 引入的）
+    implementation(libs.room.runtime)
 
     // Compose
     implementation(platform(libs.compose.bom))
