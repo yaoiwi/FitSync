@@ -7,7 +7,6 @@ import com.fitsync.data.db.ActivityEntity
 import com.fitsync.data.db.FitDataRepository
 import com.fitsync.data.settings.AccountAliasStore
 import com.fitsync.data.settings.PrimaryAccountStore
-import com.fitsync.feature.update.UpdateChecker
 import com.fitsync.sync.SyncCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -35,8 +34,6 @@ class HomeViewModel @Inject constructor(
     private val primaryAccountStore: PrimaryAccountStore,
     private val syncCoordinator: SyncCoordinator,
     private val aliasStore: AccountAliasStore,
-    // 带默认值：JVM 冒烟测试直接 new 这个 ViewModel 时不必构造它
-    private val updateChecker: UpdateChecker = UpdateChecker(),
 ) : ViewModel() {
 
     /**
@@ -126,33 +123,6 @@ class HomeViewModel @Inject constructor(
 
     /** 同步/导入/复制的状态统一来自协调器，打开 App 时的自动同步也能在这里看到 */
     val syncState: StateFlow<SyncCoordinator.UiState> = syncCoordinator.state
-
-    /** 检查更新的状态，设置页「检查更新」一行直接读它 */
-    sealed interface UpdateState {
-        data object Idle : UpdateState
-        data object Checking : UpdateState
-        data object UpToDate : UpdateState
-        data class Available(val version: String, val url: String) : UpdateState
-        data object NoRelease : UpdateState
-        data class Failed(val message: String) : UpdateState
-    }
-
-    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.Idle)
-    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
-
-    fun checkUpdate(currentVersion: String) {
-        if (_updateState.value is UpdateState.Checking) return
-        _updateState.value = UpdateState.Checking
-        viewModelScope.launch {
-            _updateState.value = when (val result = updateChecker.check(currentVersion)) {
-                is UpdateChecker.Result.Available ->
-                    UpdateState.Available(result.version, result.url)
-                UpdateChecker.Result.UpToDate -> UpdateState.UpToDate
-                UpdateChecker.Result.NoRelease -> UpdateState.NoRelease
-                is UpdateChecker.Result.Failed -> UpdateState.Failed(result.message)
-            }
-        }
-    }
 
     fun syncNow() = syncCoordinator.syncNow()
 
