@@ -113,6 +113,7 @@ fun MiuixRow(
     showArrow: Boolean = false,
     onClick: (() -> Unit)? = null,
 ) {
+    val tick = rememberTick()
     BasicComponent(
         title = title,
         modifier = modifier,
@@ -126,7 +127,13 @@ fun MiuixRow(
             }
         },
         insideMargin = PaddingValues(horizontal = 18.dp, vertical = 14.dp),
-        onClick = onClick,
+        // 可点行都带一次轻震，和 HyperOS 的列表手感一致
+        onClick = onClick?.let { action ->
+            {
+                tick()
+                action()
+            }
+        },
     )
 }
 
@@ -161,6 +168,7 @@ fun MiuixSegmentedControl(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val tick = rememberTick()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -175,7 +183,10 @@ fun MiuixSegmentedControl(
                     .weight(1f)
                     .clip(RoundedCornerShape(11.dp))
                     .background(if (selected) MiuixCardSurface else Color.Transparent)
-                    .clickable { onSelect(index) }
+                    .clickable {
+                        if (index != selectedIndex) tick()
+                        onSelect(index)
+                    }
                     .padding(vertical = 10.dp),
                 contentAlignment = Alignment.Center,
             ) {
@@ -200,9 +211,13 @@ fun MiuixSwitch(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
 ) {
+    val tick = rememberTick()
     Switch(
         checked = checked,
-        onCheckedChange = onCheckedChange,
+        onCheckedChange = {
+            tick()
+            onCheckedChange(it)
+        },
         modifier = modifier,
         enabled = enabled,
     )
@@ -284,13 +299,17 @@ fun MiuixPrimaryButton(
     loading: Boolean = false,
 ) {
     val bg = if (enabled) MiuixPrimary else MiuixPrimary.copy(alpha = 0.35f)
+    val tick = rememberTick()
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(48.dp)
             .clip(RoundedCornerShape(16.dp))
             .background(bg)
-            .clickable(enabled = enabled && !loading) { onClick() },
+            .clickable(enabled = enabled && !loading) {
+                tick()
+                onClick()
+            },
         contentAlignment = Alignment.Center,
     ) {
         if (loading) {
@@ -314,11 +333,15 @@ fun MiuixTextButton(
     enabled: Boolean = true,
     color: Color? = null,
 ) {
+    val tick = rememberTick()
     Box(
         modifier = modifier
             .height(48.dp)
             .clip(RoundedCornerShape(16.dp))
-            .clickable(enabled = enabled) { onClick() }
+            .clickable(enabled = enabled) {
+                tick()
+                onClick()
+            }
             .padding(horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {

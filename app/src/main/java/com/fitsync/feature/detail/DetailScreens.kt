@@ -16,6 +16,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -30,7 +33,9 @@ import com.fitsync.feature.home.HomeViewModel
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
+import com.fitsync.ui.components.MiuixConfirmDialog
 import com.fitsync.ui.components.MiuixDivider
+import com.fitsync.ui.components.MiuixInputDialog
 import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
@@ -44,6 +49,7 @@ import com.fitsync.ui.components.statusLabel
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixCardSurface
+import com.fitsync.ui.theme.MiuixError
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
 import top.yukonga.miuix.kmp.basic.Icon
@@ -123,30 +129,33 @@ fun AccountDetailScreen(
     val aliases by viewModel.aliases.collectAsState()
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val account = accounts.firstOrNull { it.id == accountId }
+    var showRename by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
 
     FitSyncTheme {
-        GlassHost(modifier = Modifier.fillMaxSize()) {
-            HyperPage(
-                title = "账号详情",
-                subtitle = account?.let { regionLabel(it.region) } ?: "账号不存在",
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(MiuixIcons.Back, contentDescription = "返回")
-                    }
-                },
-            ) {
-                if (account == null) {
-                    item {
-                        MiuixCard {
-                            Text(
-                                text = "找不到这个账号，可能已被移除。",
-                                fontSize = 14.sp,
-                                color = MiuixSummary,
-                                modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
-                            )
+        Box(modifier = Modifier.fillMaxSize()) {
+            GlassHost(modifier = Modifier.fillMaxSize()) {
+                HyperPage(
+                    title = "账号详情",
+                    subtitle = account?.let { regionLabel(it.region) } ?: "账号不存在",
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(MiuixIcons.Back, contentDescription = "返回")
                         }
-                    }
-                } else {
+                    },
+                ) {
+                    if (account == null) {
+                        item {
+                            MiuixCard {
+                                Text(
+                                    text = "找不到这个账号，可能已被移除。",
+                                    fontSize = 14.sp,
+                                    color = MiuixSummary,
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 20.dp),
+                                )
+                            }
+                        }
+                    } else {
                     item {
                         MiuixSectionTitle("基本信息")
                         MiuixCard {
@@ -161,6 +170,8 @@ fun AccountDetailScreen(
                                         color = MiuixSummary,
                                     )
                                 },
+                                showArrow = true,
+                                onClick = { showRename = true },
                             )
                             MiuixDivider()
                             DetailLine("数据源", if (account.sourceType == "garmin") "Garmin Connect" else account.sourceType)
@@ -236,8 +247,9 @@ fun AccountDetailScreen(
                             }
                             MiuixRow(
                                 title = "修改昵称",
+                                summary = "只改本应用显示，不影响同步",
                                 showArrow = true,
-                                onClick = { },
+                                onClick = { showRename = true },
                             )
                         }
                     }
@@ -251,11 +263,52 @@ fun AccountDetailScreen(
                         )
                         MiuixTextButton(
                             text = "移除账号",
-                            onClick = { },
+                            onClick = { showDelete = true },
+                            color = MiuixError,
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Spacer(Modifier.height(16.dp))
                     }
+                }
+            }
+            }
+
+            account?.let { acc ->
+                val customAlias = aliases[acc.id]
+                if (showRename) {
+                    MiuixInputDialog(
+                        title = "修改昵称",
+                        initialValue = customAlias ?: "",
+                        message = "只改本应用的显示名，不会动 Garmin 账号。Garmin 原昵称："
+                            + acc.displayName.ifBlank { acc.externalUserId },
+                        placeholder = acc.displayName.ifBlank { acc.externalUserId },
+                        confirmText = "保存",
+                        neutralText = if (!customAlias.isNullOrBlank()) "恢复默认" else null,
+                        onNeutral = {
+                            viewModel.renameAccount(acc.id, "")
+                            showRename = false
+                        },
+                        onConfirm = { value ->
+                            viewModel.renameAccount(acc.id, value.trim())
+                            showRename = false
+                        },
+                        onDismiss = { showRename = false },
+                    )
+                }
+                if (showDelete) {
+                    MiuixConfirmDialog(
+                        title = "移除账号",
+                        message = "会从本应用删除「${customAlias ?: acc.displayName.ifBlank { acc.externalUserId }}」"
+                            + "及其在本机同步的缓存。Garmin 账号本身不受影响，之后可以重新添加。",
+                        confirmText = "移除",
+                        destructive = true,
+                        onConfirm = {
+                            viewModel.deleteAccount(acc.id)
+                            showDelete = false
+                            onBack()
+                        },
+                        onDismiss = { showDelete = false },
+                    )
                 }
             }
         }

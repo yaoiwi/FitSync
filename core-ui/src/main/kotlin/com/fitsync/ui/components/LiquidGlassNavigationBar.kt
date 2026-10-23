@@ -138,6 +138,12 @@ fun LiquidGlassNavigationBar(
 ) {
     if (items.isEmpty()) return
     val backdrop = LocalGlassBackdrop.current
+    val tick = rememberTick()
+    // 只在真正换页时震一下；点当前 tab 不震
+    val select: (Int) -> Unit = { index ->
+        if (index != selectedTabIndex()) tick()
+        onTabSelected(index)
+    }
     val barModifier = modifier
         .fillMaxWidth()
         .padding(bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
@@ -147,7 +153,7 @@ fun LiquidGlassNavigationBar(
                 items.forEachIndexed { index, item ->
                     FloatingNavigationBarItem(
                         selected = selectedTabIndex() == index,
-                        onClick = { onTabSelected(index) },
+                        onClick = { select(index) },
                         icon = item.icon,
                         label = item.label,
                     )
@@ -163,14 +169,14 @@ fun LiquidGlassNavigationBar(
     ) {
         FloatingLiquidBar(
             selectedIndex = selectedTabIndex,
-            onSelected = onTabSelected,
+            onSelected = select,
             backdrop = backdrop,
             tabsCount = items.size,
         ) {
             items.forEachIndexed { index, item ->
                 FloatingLiquidBarItem(
                     selected = selectedTabIndex() == index,
-                    onClick = { onTabSelected(index) },
+                    onClick = { select(index) },
                     modifier = Modifier.defaultMinSize(minWidth = 76.dp),
                 ) {
                     Icon(

@@ -37,6 +37,17 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.3",
+            date = "2026-10-24",
+            highlights = listOf(
+                "账号详情「修改昵称」和「移除账号」修好，之前点了没反应",
+                "移除账号会级联清理活动、采样、日汇总与同步游标，并在需要时清空主账号",
+                "新增触感反馈：列表行、按钮、开关、分段控件、页签切换、同步完成都有震动",
+                "设置 → 外观 新增「触感反馈」开关，可随时关掉",
+                "对话框统一换成 HyperOS 风格，替换原来的 Material3 弹窗",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.2",
             date = "2026-10-24",
             highlights = listOf(

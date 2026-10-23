@@ -58,13 +58,17 @@ import com.fitsync.BuildConfig
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
 import com.fitsync.ui.components.GlassHost
+import com.fitsync.ui.components.HapticFeedback
+import com.fitsync.ui.components.Haptics
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.LiquidGlassNavigationBar
 import com.fitsync.ui.components.LiquidGlassNavigationItem
 import com.fitsync.ui.components.MiuixCard
 import com.fitsync.ui.components.MiuixDivider
+import com.fitsync.ui.components.MiuixInputDialog
 import com.fitsync.ui.components.MiuixLargeHeader
 import com.fitsync.ui.components.formatDuration
+import com.fitsync.ui.components.rememberTick
 import com.fitsync.ui.components.regionLabel
 import com.fitsync.ui.components.sportGlyph
 import com.fitsync.ui.components.statusColor
@@ -73,6 +77,7 @@ import com.fitsync.ui.components.MiuixLeadingIcon
 import com.fitsync.ui.components.MiuixNavItem
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
+import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixAction
@@ -132,12 +137,22 @@ fun HomeScreen(
     val syncState by viewModel.syncState.collectAsState()
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
-    var showCopyConfirm by remember { mutableStateOf(false) }
-    var showHealthConfirm by remember { mutableStateOf(false) }
     var renameTarget by remember { mutableStateOf<AccountEntity?>(null) }
     var tab by remember { mutableStateOf(0) }
     // 今日大数字当前展示哪个指标：0 步数 / 1 距离 / 2 活动热量 / 3 楼层
     var todayMetric by remember { mutableStateOf(0) }
+    // 同步从"进行中"落到"结束"时给一次触感：成功双击、失败重震
+    var wasSyncing by remember { mutableStateOf(false) }
+    LaunchedEffect(syncState.syncing) {
+        if (wasSyncing && !syncState.syncing) {
+            val failed = syncState.message?.contains("失败") == true
+            Haptics.perform(
+                context,
+                if (failed) HapticFeedback.Warning else HapticFeedback.Success,
+            )
+        }
+        wasSyncing = syncState.syncing
+    }
     val pickFile: () -> Unit = {
         importLauncher.launch(
             arrayOf(
@@ -153,86 +168,23 @@ fun HomeScreen(
     FitSyncTheme {
         Box(modifier = Modifier.fillMaxSize().background(MiuixCanvas)) {
             renameTarget?.let { target ->
-                var draft by remember(target.id) {
-                    mutableStateOf(aliases[target.id] ?: "")
-                }
-                AlertDialog(
-                    onDismissRequest = { renameTarget = null },
-                    title = { Text("修改昵称") },
-                    text = {
-                        Column {
-                            OutlinedTextField(
-                                value = draft,
-                                onValueChange = { draft = it },
-                                label = { Text("显示昵称") },
-                                singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Garmin 原昵称：${target.displayName}（改昵称只影响本应用显示，不影响同步）",
-                                fontSize = 11.sp,
-                                color = MiuixSummary,
-                            )
-                        }
+                val customAlias = aliases[target.id]
+                MiuixInputDialog(
+                    title = "修改昵称",
+                    initialValue = customAlias ?: "",
+                    message = "只影响本应用的显示名，不会改动 Garmin 账号。原昵称："
+                        + target.displayName.ifBlank { target.externalUserId },
+                    placeholder = target.displayName.ifBlank { target.externalUserId },
+                    neutralText = if (!customAlias.isNullOrBlank()) "恢复默认" else null,
+                    onNeutral = {
+                        viewModel.renameAccount(target.id, "")
+                        renameTarget = null
                     },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            viewModel.renameAccount(target.id, draft)
-                            renameTarget = null
-                        }) { Text("保存") }
+                    onConfirm = { value ->
+                        viewModel.renameAccount(target.id, value.trim())
+                        renameTarget = null
                     },
-                    dismissButton = {
-                        TextButton(onClick = {
-                            viewModel.renameAccount(target.id, "")
-                            renameTarget = null
-                        }) { Text("恢复默认") }
-                    },
-                )
-            }
-            if (showHealthConfirm) {
-                AlertDialog(
-                    onDismissRequest = { showHealthConfirm = false },
-                    title = { Text("搬运健康数据到另一账号") },
-                    text = {
-                        Text(
-                            "会把主账号最近 7 天的步数、睡眠、压力以 monitoring FIT 上传到另一个账号。\n\n" +
-                                "前提：目标账号必须已绑定这块手表（Garmin 只接受已绑定设备上传的健康数据）。" +
-                                "若目标账号没有设备标签，请先用 Garmin Express 把手表注册到该区。\n\n" +
-                                "限制：睡眠/HRV 类数据 Garmin 只允许回溯约 1 个月。"
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showHealthConfirm = false
-                            viewModel.copyHealthToOtherAccount()
-                        }) { Text("开始搬运") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showHealthConfirm = false }) { Text("取消") }
-                    },
-                )
-            }
-            if (showCopyConfirm) {
-                AlertDialog(
-                    onDismissRequest = { showCopyConfirm = false },
-                    title = { Text("复制活动到另一账号") },
-                    text = {
-                        Text(
-                            "会把主账号最近 10 条活动（跑步、骑行、健身等）上传到另一个 Garmin 账号。\n\n" +
-                                "注意：心率、睡眠、喝水、步数这些健康数据 Garmin 不提供写入接口，" +
-                                "无法复制到对方账号，只能在本应用内合并展示。"
-                        )
-                    },
-                    confirmButton = {
-                        TextButton(onClick = {
-                            showCopyConfirm = false
-                            viewModel.copyActivitiesToOtherAccount()
-                        }) { Text("开始复制") }
-                    },
-                    dismissButton = {
-                        TextButton(onClick = { showCopyConfirm = false }) { Text("取消") }
-                    },
+                    onDismiss = { renameTarget = null },
                 )
             }
 
@@ -386,6 +338,7 @@ private fun OverviewTab(
 ) {
     val primaryName = accounts.firstOrNull { it.id == primaryAccountId }
         ?.let { it.displayName.ifBlank { it.externalUserId } }
+    val tick = rememberTick()
 
     HyperPage(
         title = "概览",
@@ -402,7 +355,10 @@ private fun OverviewTab(
                 color = if (syncing) MiuixAction else MiuixPrimary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable(enabled = !syncing) { onSync() }
+                    .clickable(enabled = !syncing) {
+                        tick()
+                        onSync()
+                    }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         },
@@ -548,10 +504,14 @@ private fun OverviewTab(
 
 @Composable
 private fun ActivityRow(activity: ActivityEntity, onClick: () -> Unit = {}) {
+    val tick = rememberTick()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable {
+                tick()
+                onClick()
+            }
             .padding(horizontal = 18.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -614,6 +574,7 @@ private fun AccountsTab(
     onCopyHealth: () -> Unit,
     onOpenAccount: () -> Unit = {},
 ) {
+    val tick = rememberTick()
     HyperPage(
         title = "账号",
         subtitle = "两个区可互相同步，主账号决定首页以谁为准",
@@ -627,7 +588,10 @@ private fun AccountsTab(
                 color = if (syncing) MiuixAction else MiuixPrimary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(10.dp))
-                    .clickable(enabled = !syncing) { onSync() }
+                    .clickable(enabled = !syncing) {
+                        tick()
+                        onSync()
+                    }
                     .padding(horizontal = 10.dp, vertical = 6.dp),
             )
         },
@@ -697,10 +661,14 @@ private fun AccountRow(
     onSetPrimary: () -> Unit,
     onClick: () -> Unit = {},
 ) {
+    val tick = rememberTick()
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable {
+                tick()
+                onClick()
+            }
             .padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -753,7 +721,10 @@ private fun AccountRow(
                 color = if (isPrimary) MiuixPrimary else MiuixAction,
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable(enabled = !isPrimary) { onSetPrimary() }
+                    .clickable(enabled = !isPrimary) {
+                        tick()
+                        onSetPrimary()
+                    }
                     .padding(horizontal = 6.dp, vertical = 3.dp),
             )
             Spacer(Modifier.height(4.dp))
@@ -763,7 +734,10 @@ private fun AccountRow(
                 color = MiuixPrimary,
                 modifier = Modifier
                     .clip(RoundedCornerShape(8.dp))
-                    .clickable { onRename() }
+                    .clickable {
+                        tick()
+                        onRename()
+                    }
                     .padding(horizontal = 6.dp, vertical = 3.dp),
             )
         }
@@ -785,6 +759,8 @@ private fun SettingsTab(
 ) {
     val themeOptions = listOf("跟随系统", "浅色", "深色")
     val themeCodes = listOf(ThemeModePref.FOLLOW, ThemeModePref.LIGHT, ThemeModePref.DARK)
+    val settingsContext = LocalContext.current
+    var hapticsOn by remember { mutableStateOf(Haptics.isEnabled(settingsContext)) }
     HyperPage(
         title = "设置",
         subtitle = "外观、同步策略与版本信息",
@@ -843,6 +819,21 @@ private fun SettingsTab(
                         onSelect = { onThemeModeChange(themeCodes[it]) },
                     )
                 }
+                MiuixDivider()
+                MiuixRow(
+                    title = "触感反馈",
+                    summary = "点击、切换、完成时轻震一下",
+                    trailing = {
+                        MiuixSwitch(
+                            checked = hapticsOn,
+                            onCheckedChange = { enabled ->
+                                hapticsOn = enabled
+                                Haptics.setEnabled(settingsContext, enabled)
+                                if (enabled) Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                            },
+                        )
+                    },
+                )
             }
         }
 

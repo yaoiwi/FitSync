@@ -117,6 +117,12 @@ class HomeViewModel @Inject constructor(
     fun clearMessage() = syncCoordinator.clearMessage()
 
     fun deleteAccount(accountId: Long) {
-        viewModelScope.launch { repository.deleteAccount(accountId) }
+        viewModelScope.launch {
+            val wasPrimary = primaryAccountId.value == accountId
+            // 级联清理该账号的活动、采样、日汇总、同步游标等，避免留下孤儿行
+            repository.purgeAccount(accountId)
+            aliasStore.setAlias(accountId, "")
+            if (wasPrimary) primaryAccountStore.clear()
+        }
     }
 }
