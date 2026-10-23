@@ -21,6 +21,7 @@ import com.fitsync.ui.about.AboutContent
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
+import com.fitsync.ui.components.MiuixDivider
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixPrimary
@@ -45,28 +46,20 @@ fun ChangelogScreen(onBack: () -> Unit) {
                     }
                 },
             ) {
-                val current = AboutContent.changeLogs.firstOrNull()
-                if (current != null) {
-                    item {
-                        MiuixCard {
+                item {
+                    MiuixCard {
+                        AboutContent.changeLogs.forEachIndexed { index, entry ->
                             ChangeLogBlock(
-                                version = current.version,
-                                date = current.date,
-                                highlights = current.highlights,
-                                isLatest = true,
+                                version = entry.version,
+                                date = entry.date,
+                                highlights = entry.highlights,
+                                isLatest = index == 0,
                             )
+                            if (index != AboutContent.changeLogs.lastIndex) {
+                                MiuixDivider(startIndent = 18)
+                            }
                         }
                     }
-                }
-                item {
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        text = "更早的版本记录已归档在项目仓库的 CHANGELOG.md，这里只显示当前版本的改动。",
-                        fontSize = 12.sp,
-                        lineHeight = 18.sp,
-                        color = MiuixSummary,
-                        modifier = Modifier.padding(horizontal = 18.dp),
-                    )
                 }
                 item { Spacer(Modifier.height(24.dp)) }
             }

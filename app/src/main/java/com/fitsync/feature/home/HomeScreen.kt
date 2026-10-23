@@ -1,5 +1,8 @@
 package com.fitsync.feature.home
 
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +58,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.BuildConfig
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
+import com.fitsync.feature.update.UpdateChecker
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HapticFeedback
 import com.fitsync.ui.components.Haptics
@@ -137,6 +141,7 @@ fun HomeScreen(
     val syncState by viewModel.syncState.collectAsState()
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     var renameTarget by remember { mutableStateOf<AccountEntity?>(null) }
     var tab by remember { mutableStateOf(0) }
     // 今日大数字当前展示哪个指标：0 步数 / 1 距离 / 2 活动热量 / 3 楼层
@@ -254,6 +259,8 @@ fun HomeScreen(
                                 onOpenAccounts = onOpenAccounts,
                                 onOpenChangelog = onOpenChangelog,
                                 onOpenAcknowledgements = onOpenAcknowledgements,
+                                updateState = updateState,
+                                onCheckUpdate = { viewModel.checkUpdate(BuildConfig.VERSION_NAME) },
                             )
                     }
                 }
@@ -760,6 +767,8 @@ private fun SettingsTab(
     onOpenAccounts: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
     onOpenAcknowledgements: () -> Unit = {},
+    updateState: HomeViewModel.UpdateState = HomeViewModel.UpdateState.Idle,
+    onCheckUpdate: () -> Unit = {},
 ) {
     val themeOptions = listOf("跟随系统", "浅色", "深色")
     val themeCodes = listOf(ThemeModePref.FOLLOW, ThemeModePref.LIGHT, ThemeModePref.DARK)
@@ -849,8 +858,58 @@ private fun SettingsTab(
                 )
                 MiuixDivider()
                 MiuixRow(
+                    title = "检查更新",
+                    summary = when (val state = updateState) {
+                        HomeViewModel.UpdateState.Idle -> "从 GitHub 检查有没有新版本"
+                        HomeViewModel.UpdateState.Checking -> "正在检查…"
+                        HomeViewModel.UpdateState.UpToDate -> "已是最新版本"
+                        HomeViewModel.UpdateState.NoRelease -> "仓库还没有发布版本"
+                        is HomeViewModel.UpdateState.Available -> "发现 ${state.version}，点击去下载"
+                        is HomeViewModel.UpdateState.Failed -> "检查失败：${state.message}，点击重试"
+                    },
+                    trailing = {
+                        Text(
+                            text = when (updateState) {
+                                HomeViewModel.UpdateState.Checking -> "…"
+                                is HomeViewModel.UpdateState.Available -> "去下载"
+                                else -> "检查"
+                            },
+                            fontSize = 14.sp,
+                            color = if (updateState is HomeViewModel.UpdateState.Available) {
+                                MiuixPrimary
+                            } else {
+                                MiuixSummary
+                            },
+                        )
+                    },
+                    showArrow = updateState is HomeViewModel.UpdateState.Available,
+                    onClick = {
+                        val available = updateState as? HomeViewModel.UpdateState.Available
+                        if (available != null) {
+                            openExternal(settingsContext, available.url)
+                        } else {
+                            onCheckUpdate()
+                        }
+                    },
+                )
+                MiuixDivider()
+                MiuixRow(
                     title = "数据来源",
                     summary = "Garmin Connect 中国区 / 国际区，本地加密存储",
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "项目主页",
+                    summary = "GitHub 上的 FitSync 仓库",
+                    showArrow = true,
+                    onClick = { openExternal(settingsContext, UpdateChecker.PROJECT_URL) },
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "问题反馈",
+                    summary = "遇到问题去提 Issue",
+                    showArrow = true,
+                    onClick = { openExternal(settingsContext, UpdateChecker.ISSUES_URL) },
                 )
                 MiuixDivider()
                 MiuixRow(
@@ -929,3 +988,10 @@ private fun EmptyState(onAddAccount: () -> Unit, onImport: () -> Unit) {
 
 // ============================ 工具 ============================
 // 格式化与状态映射统一放在 core-ui 的 Formatters.kt，账号详情 / 活动详情等页面共用。
+
+/** 打开外部链接；没有浏览器时静默失败，不崩应用 */
+private fun openExternal(context: Context, url: String) {
+    runCatching {
+        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
+}
