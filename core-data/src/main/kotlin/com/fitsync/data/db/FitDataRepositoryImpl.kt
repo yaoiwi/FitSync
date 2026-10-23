@@ -1,6 +1,7 @@
 package com.fitsync.data.db
 
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import javax.inject.Inject
 
@@ -113,7 +114,8 @@ class FitDataRepositoryImpl @Inject constructor(
     override fun observeRecentActivities(limit: Int): Flow<List<ActivityEntity>> =
         activityDao.observeRecent(limit)
 
-    override fun observeActivityCount(): Flow<Int> = activityDao.observeTotalCount()
+    override fun observeActivityCount(accountId: Long?): Flow<Int> =
+        if (accountId == null) flowOf(0) else activityDao.observeCountByAccount(accountId)
 
     override suspend fun getActivity(activityId: Long) =
         activityDao.getById(activityId)
@@ -207,14 +209,10 @@ class FitDataRepositoryImpl @Inject constructor(
         primaryAccountId: Long?,
         limit: Int,
     ): Flow<List<ActivityEntity>> =
-        activityDao.observeRecent(limit * 3).map { rows ->
-            val merged = LinkedHashMap<String, ActivityEntity>()
-            rows.filter { it.accountId == primaryAccountId }
-                .forEach { merged[it.externalId] = it }
-            rows.filter { it.accountId != primaryAccountId }
-                .forEach { merged.putIfAbsent(it.externalId, it) }
-            merged.values.sortedByDescending { it.startTimeMs }.take(limit)
-        }
+        // 只读主账号：两个区的活动 ID 是两套编号，按 externalId 去重从来就没生效过，
+        // 合并只会让同一场运动出现两次。
+        if (primaryAccountId == null) flowOf(emptyList())
+        else activityDao.observeRecentByAccount(primaryAccountId, limit)
 
     override suspend fun upsertDailySummaries(list: List<DailySummaryEntity>) =
         dailyDao.upsertAll(list)

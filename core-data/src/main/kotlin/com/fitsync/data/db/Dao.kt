@@ -166,6 +166,13 @@ interface ActivityDao {
     @Query("SELECT * FROM activities ORDER BY start_time_ms DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<ActivityEntity>>
 
+    /** 只取某个账号的活动：首页/活动页以主账号为准，避免两个区同步到同一批活动时重复出现 */
+    @Query("SELECT * FROM activities WHERE account_id = :a ORDER BY start_time_ms DESC LIMIT :limit")
+    fun observeRecentByAccount(a: Long, limit: Int): Flow<List<ActivityEntity>>
+
+    @Query("SELECT COUNT(*) FROM activities WHERE account_id = :a")
+    fun observeCountByAccount(a: Long): Flow<Int>
+
     @Query("SELECT COUNT(*) FROM activities")
     fun observeTotalCount(): Flow<Int>
 

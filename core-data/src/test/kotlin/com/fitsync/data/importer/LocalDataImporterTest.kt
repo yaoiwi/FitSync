@@ -89,8 +89,8 @@ class LocalDataImporterTest {
         assertEquals(450, sleepRow.totalSleepMin)
         assertEquals(81, sleepRow.sleepScore)
 
-        assertEquals(1, repository.observeActivityCount().first())
         val activity = repository.observeRecentActivities(5).first().first()
+        assertEquals(1, repository.observeActivityCount(activity.accountId).first())
         assertEquals("running", activity.sport)
         assertEquals(5021.0, activity.distanceM, 0.01)
     }

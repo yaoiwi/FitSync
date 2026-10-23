@@ -494,10 +494,11 @@ private fun OverviewTab(
             if (dashboard.activities.isNotEmpty()) {
                 item {
                     MiuixSectionTitle("最近活动")
+                    val recent = dashboard.activities.take(5)
                     MiuixCard {
-                        dashboard.activities.forEachIndexed { index, activity ->
+                        recent.forEachIndexed { index, activity ->
                             ActivityRow(activity) { onOpenActivity(activity.id) }
-                            if (index != dashboard.activities.lastIndex) MiuixDivider(startIndent = 72)
+                            if (index != recent.lastIndex) MiuixDivider(startIndent = 72)
                         }
                     }
                 }

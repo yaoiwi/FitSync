@@ -6,6 +6,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -110,7 +111,7 @@ class MergedDataTest {
     }
 
     @Test
-    fun `活动按externalId去重且主账号优先`() = runBlocking {
+    fun `活动只返回主账号的数据`() = runBlocking {
         val cn = createAccount("cn", "cn_user")
         val intl = createAccount("com", "intl_user")
 
@@ -135,8 +136,14 @@ class MergedDataTest {
 
         val merged = repository.observeMergedRecentActivities(cn, limit = 5).first()
 
-        assertEquals("两条不同活动 + 一条重复", 2, merged.size)
-        assertEquals("A2", merged.first().externalId)
-        assertEquals("重复的 A1 应取主账号那条", 5000.0, merged.first { it.externalId == "A1" }.distanceM, 0.01)
+        // 活动是"账号独有"的数据：CN 区和国际区各自一套活动 ID，
+        // 即使内容是同一场运动也无法可靠去重，所以只返回主账号的。
+        assertEquals("只应有主账号的一条活动", 1, merged.size)
+        assertEquals(cn, merged.first().accountId)
+        assertEquals("A1", merged.first().externalId)
+        assertEquals(5000.0, merged.first().distanceM, 0.01)
+
+        // 没有主账号时不应把别人的活动当成自己的返回
+        assertTrue(repository.observeMergedRecentActivities(null, limit = 5).first().isEmpty())
     }
 }

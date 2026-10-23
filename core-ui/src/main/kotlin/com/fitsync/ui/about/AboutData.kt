@@ -37,6 +37,16 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.5",
+            date = "2026-10-24",
+            highlights = listOf(
+                "活动列表只显示主账号的活动，两个区同步到同一场运动不再成对出现",
+                "活动数统计改为只算主账号，与列表条数一致",
+                "活动页最多展示 50 条（原来只取 5 条）",
+                "未设主账号时退回按第一个账号取数，不再把所有账号的活动混在一起",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.4",
             date = "2026-10-24",
             highlights = listOf(

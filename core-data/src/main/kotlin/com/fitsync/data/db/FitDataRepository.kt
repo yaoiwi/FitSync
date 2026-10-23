@@ -44,7 +44,8 @@ interface FitDataRepository {
     // ==================== 运动域 ====================
     fun observeActivities(accountId: Long): Flow<List<ActivityEntity>>
     fun observeRecentActivities(limit: Int): Flow<List<ActivityEntity>>
-    fun observeActivityCount(): Flow<Int>
+    /** 某个账号的活动总数；[accountId] 为 null 表示没有账号，返回 0 */
+    fun observeActivityCount(accountId: Long?): Flow<Int>
     suspend fun getActivity(activityId: Long): ActivityEntity?
     suspend fun upsertActivity(activity: ActivityEntity): Long
     suspend fun upsertActivitySamples(samples: List<ActivitySampleEntity>)
@@ -69,7 +70,13 @@ interface FitDataRepository {
     /** 跨账号合并后的最新一次睡眠（主账号优先，缺失字段用另一区补齐） */
     fun observeMergedLatestSleep(primaryAccountId: Long?): Flow<SleepSessionEntity?>
 
-    /** 两个区的活动合并去重（按 externalId），主账号优先 */
+    /**
+     * 某个账号的最近活动。
+     *
+     * 曾经是"两个区合并去重"，但对同一块表产生的同一批活动，两个账号的 externalId 并不相同
+     * （CN 区活动 ID 与国际区是两套编号），去重不生效，列表里就会出现成对重复。
+     * 现在统一只读主账号的数据；[accountId] 为 null 时返回空列表。
+     */
     fun observeMergedRecentActivities(primaryAccountId: Long?, limit: Int): Flow<List<ActivityEntity>>
     suspend fun upsertDailySummaries(list: List<DailySummaryEntity>)
     fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>>

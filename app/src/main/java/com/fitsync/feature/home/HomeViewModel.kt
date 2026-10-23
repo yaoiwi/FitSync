@@ -10,6 +10,7 @@ import com.fitsync.data.settings.PrimaryAccountStore
 import com.fitsync.sync.SyncCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.catch
@@ -74,17 +75,29 @@ class HomeViewModel @Inject constructor(
     val aliases: StateFlow<Map<Long, String>> = aliasStore.aliases
 
     /**
-     * 中国区 + 国际区的合并视图：主账号优先，缺失字段由另一区补齐。
+     * 实际用于取数的账号：优先主账号，没设主账号就退回列表里的第一个。
+     *
+     * 活动这类"按账号独有"的数据不能跨账号合并——两个区各自有一份活动 ID，
+     * 同一场运动会以两条记录出现。健康汇总仍按主账号优先、缺失字段由另一区补齐。
+     */
+    private val effectivePrimaryId: Flow<Long?> = combine(
+        primaryAccountStore.primaryAccountId,
+        repository.observeEnabledAccounts(),
+    ) { primary, accounts -> primary ?: accounts.firstOrNull()?.id }
+
+    /**
+     * 首页数据：健康汇总取主账号优先、缺失由另一区补齐；活动与计数只按 [effectivePrimaryId]。
      * 切换主账号只需要重新订阅，不需要重新同步。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
-    val dashboard: StateFlow<Dashboard> = primaryAccountStore.primaryAccountId
+    val dashboard: StateFlow<Dashboard> = effectivePrimaryId
         .flatMapLatest { primaryId ->
             combine(
                 repository.observeMergedLatestDaily(primaryId),
                 repository.observeMergedLatestSleep(primaryId),
-                repository.observeMergedRecentActivities(primaryId, limit = 5),
-                repository.observeActivityCount(),
+                // 取 50 条：概览页只展示前 5 条，活动页展示全部
+                repository.observeMergedRecentActivities(primaryId, limit = 50),
+                repository.observeActivityCount(primaryId),
                 repository.observeDailyCount(),
             ) { summary, sleep, activities, count, dailyCount ->
                 Dashboard(
