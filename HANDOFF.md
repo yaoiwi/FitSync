@@ -5,13 +5,13 @@
 ## 〇、发版清单（每次发版必须全做）
 
 1. `app/build.gradle.kts`：`versionCode` +1、`versionName` 递进。
-2. `CHANGELOG.md`：顶部新增一节（版本号 + 日期 + 变更要点）。
+2. `CHANGELOG.md`：整份替换为当前版本这一节（只保留最新，不累积历史）。
 3. `core-ui/src/main/kotlin/com/fitsync/ui/about/AboutData.kt`：把 `changeLogs` **整条替换成当前版本**
    （应用内「更新日志」只显示这一条；历史只留在 CHANGELOG.md）。
 4. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组。
 5. 构建 + 跑 `:app:testDebugUnitTest`，确认全绿再打包。
 
-> 第 2 步是历史归档（追加），第 3 步是应用内展示（替换成当前版本），两处都要改。
+> 第 2、3 步内容一致：都只保留当前版本，发版时整份替换。
 
 ## 一、项目是什么
 

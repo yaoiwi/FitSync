@@ -5,8 +5,8 @@ import androidx.compose.runtime.Immutable
 /**
  * 「关于」页的数据源。
  *
- * **每次发版把 [AboutContent.changeLogs] 替换成当前版本这一条**（应用内只展示最新），
- * 同时在项目根目录的 CHANGELOG.md 顶部追加一节（保留完整历史）。
+ * **每次发版把 [AboutContent.changeLogs] 替换成当前版本这一条**（应用内只展示最新）。
+ * 项目根目录的 CHANGELOG.md 同样整份替换，两处内容保持一致。
  */
 
 @Immutable
