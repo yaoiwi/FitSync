@@ -5,7 +5,7 @@
 ## 〇、发版清单（每次发版必须全做）
 
 1. `app/build.gradle.kts`：`versionCode` +1、`versionName` 递进。
-2. `CHANGELOG.md`：顶部新增一节（版本号 + 日期 + 变更要点），保留完整历史。
+2. `CHANGELOG.md`：顶部新增一节（版本号 + 日期 + 变更要点）。日志从 0.10.10 开始记录。
 3. `core-ui/src/main/kotlin/com/fitsync/ui/about/AboutData.kt`：在 `changeLogs` **顶部加一条**
    （应用内「更新日志」展示完整历史）。
 4. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组。
