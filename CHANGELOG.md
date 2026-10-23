@@ -3,6 +3,13 @@
 > 发版规则：**每次改版本号都必须在这里加一节 + 同步 `core-ui/.../about/AboutData.kt` 的 `changeLogs`**，
 > 应用内「设置 → 关于 → 更新日志」直接读那份数据。两处内容必须一致。
 
+## 0.10.6 — 2026-10-24
+
+- 移除「设置 → Garmin 官方 API」入口、连接页与 `PersonalApiViewModel`，只保留账号密码 / 导入两条数据通道
+- `core-data` 里的 `PersonalApiClient` / `PersonalApiStore` / `PersonalApiSyncEngine` / `FitActivityParser` **保留但不再被界面调用**，文件头已注明当前状态；以后恢复只需重做一个入口页，调用 `connect(key)` 与 `sync(days)`
+- 已入库的活动采样点与轨迹不受影响，活动详情页仍能画出轨迹和心率/速度/海拔曲线
+- 如果之前用 API Key 建过一个 `garmin_personal` 账号，可在「账号」页手动移除
+
 ## 0.10.5 — 2026-10-24
 
 - 活动列表改为**只显示主账号的活动**：原来的"跨账号按 externalId 合并去重"从来没生效过——CN 区与国际区的活动 ID 是两套独立编号，同一场运动在两边是不同的 externalId，去重不命中，列表就出现成对重复

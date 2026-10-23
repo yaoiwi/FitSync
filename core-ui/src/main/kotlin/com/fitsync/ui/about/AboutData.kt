@@ -37,6 +37,15 @@ object AboutContent {
 
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
+            version = "0.10.6",
+            date = "2026-10-24",
+            highlights = listOf(
+                "移除「设置 → Garmin 官方 API」入口与连接页，只保留账号密码登录",
+                "已同步过的轨迹、心率曲线数据仍保留在本地，活动详情照常显示",
+                "官方 API 的同步实现保留在数据层但不再被界面调用，以后想恢复只需加回入口页",
+            ),
+        ),
+        ChangeLogEntry(
             version = "0.10.5",
             date = "2026-10-24",
             highlights = listOf(

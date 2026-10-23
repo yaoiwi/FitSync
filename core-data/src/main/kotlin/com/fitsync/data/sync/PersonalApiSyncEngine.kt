@@ -26,10 +26,17 @@ import javax.inject.Singleton
 /**
  * Garmin 官方 Personal API 的同步编排。
  *
+ * **当前状态：未接入界面（0.10.6 起）。**
+ * 用户决定先只用账号密码登录，「设置 → Garmin 官方 API」入口已移除，
+ * 因此本引擎不会被任何界面调用。保留实现是为了以后恢复时不用重写：
+ * 只要重新做一个入口页，注入本类并调用 connect(apiKey) 与 sync(days) 即可。
+ *
  * 与原来的 [GarminSyncEngine]（私有接口）互不干扰：
  * - 这里只读，不会向 Garmin 写任何东西；
  * - 数据挂在本地一个固定账号 `garmin_personal` 下，避免和多账号混在一起；
  * - 每条活动下载原始 FIT，解析成采样点和轨迹后入库，供详情页画曲线与轨迹。
+ *
+ * 已经入库的活动采样点和轨迹不受影响，活动详情页仍能画出轨迹与曲线。
  */
 @Singleton
 class PersonalApiSyncEngine @Inject constructor(
