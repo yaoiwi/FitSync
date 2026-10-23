@@ -30,7 +30,6 @@ Android 应用 **FitSync**：多平台健康数据聚合器，是 DailySync 移�
 ├── .github/workflows/android.yml   # GitHub Actions 在线构建 APK
 ├── README-BUILD.md                 # 在线构建操作说明
 ├── HANDOFF.md                      # 本文件
-├── scripts/push-FitSync-to-github.sh  # 一键推送脚本（Termux 用）
 ├── build.gradle.kts                # 根构建脚本
 ├── settings.gradle.kts             # 三模块：:app :core-data :core-ui
 ├── gradle.properties
@@ -155,7 +154,7 @@ Kotlin 语法/类型不匹配、Dagger 注解处理器错误、Room SQL 校验�
 ```bash
 # 手机 Termux
 pkg install git -y
-bash scripts/push-FitSync-to-github.sh <GitHub用户名> [Token]
+bash ~/storage/downloads/push-FitSync-to-github.sh <GitHub用户名> [Token]   # 脚本单独提供，不随仓库分发
 ```
 
 然后打开 `https://github.com/<用户名>/FitSync/actions` → `Build Debug APK` → `Run workflow`。
