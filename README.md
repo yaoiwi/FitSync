@@ -17,11 +17,19 @@ Garmin 的中国区（`sso.garmin.cn`）和国际区（`sso.garmin.com`）是**�
 
 ## 界面
 
-- 完全基于 [Miuix](https://github.com/YuKongA/miuix) 0.9.4（HyperOS 官方风格组件库）
+<p align="center">
+  <img src="docs/screenshots/accounts.jpg" width="300" alt="账号管理">
+  &nbsp;&nbsp;&nbsp;
+  <img src="docs/screenshots/settings.jpg" width="300" alt="设置">
+</p>
+
+- 基于 [Miuix](https://github.com/YuKongA/miuix) 0.9.4（主题、卡片、开关、列表项、浮动导航），
+  在此之上补了自研组件：页面骨架 `HyperPage`、液态玻璃导航栏、分段控件、输入 / 确认对话框
 - 液态玻璃底部导航栏：真实背景模糊 + 折射 + 双光源高光，指示器弹簧滑动、拖动跟手
 - 上滑时大标题折叠、列表两端弹性回弹、顶栏渐进模糊
 - 深色模式三档：跟随系统 / 浅色 / 深色
 - 四个页签：概览 / 活动 / 账号 / 设置
+- 触感反馈：列表行、按钮、开关、页签切换、同步完成都有震动，可在设置里关闭
 
 > 液态玻璃依赖 Android 13（API 33）的 RuntimeShader；更低版本自动降级为半透明 + 高光描边。
 
@@ -37,8 +45,20 @@ Garmin 的中国区（`sso.garmin.cn`）和国际区（`sso.garmin.com`）是**�
 | 活动复制到另一账号 | ✅ |
 | 健康数据搬运（monitoring FIT） | ✅ 实验性 |
 | 本地文件导入（ZIP / JSON / CSV） | ✅ |
+| 深色模式（跟随系统 / 浅色 / 深色） | ✅ |
+| 触感反馈（可关闭） | ✅ |
 | 打开即同步（前台自动，5 分钟节流） | ✅ |
 | 定时后台同步（WorkManager） | ✅ |
+
+## 下载
+
+到 [Releases](../../releases/latest) 下载最新 APK，直接安装。
+
+- 系统要求 **Android 8.0（API 26）** 及以上
+- 液态玻璃效果需要 **Android 13（API 33）** 及以上，低版本自动降级
+- 首次打开需要登录 Garmin 账号（中国区 / 国际区都支持，可同时登录）
+
+> 从源码自己构建的步骤见下一节。
 
 ## 构建
 
@@ -142,6 +162,18 @@ export KEY_PASSWORD=...
 ```
 
 > 从 debug 签名切换到 release 签名后，手机上已安装的旧版**必须先卸载**才能装新版（签名不同）。
+
+### 核对签名是否一致
+
+```bash
+# keystore 的证书指纹
+keytool -list -v -keystore fitsync-release.jks -alias fitsync -storepass 你的密码 | grep SHA256
+
+# APK 的证书指纹
+apksigner verify --print-certs app-debug.apk | grep SHA-256
+```
+
+两者应是同一串（大小写、冒号分隔不影响）。keystore 文件本身的完整性用 `sha256sum fitsync-release.jks` 核对。
 
 ## 许可证
 
