@@ -13,6 +13,8 @@ captures/
 # 签名文件（绝对不要提交）
 *.jks
 *.keystore
+# 这份是固定的 debug keystore，故意提交：让 GitHub Actions 与本地产出签名一致
+!signing/debug.keystore
 keystore.properties
 
 # 凭据 / 本地数据

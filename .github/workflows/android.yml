@@ -39,6 +39,15 @@ jobs:
           echo "SDK_ROOT=$SDK_ROOT"
           ls "$SDK_ROOT/platforms"
 
+      # 用仓库里固定的 debug keystore。
+      # 不这么做的话，每个 runner 会用自己临时生成的 debug key，签名每次都不同，
+      # 导致 CI 产出的 APK 和本地 APK 无法互相覆盖安装。
+      - name: Use fixed debug keystore
+        run: |
+          mkdir -p "$HOME/.android"
+          cp signing/debug.keystore "$HOME/.android/debug.keystore"
+          echo "keystore ready"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 

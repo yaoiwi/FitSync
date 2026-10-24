@@ -90,6 +90,16 @@ core-ui/      UI 层：Miuix 主题、液态玻璃、页面骨架、通用组件
 
 [Miuix](https://github.com/YuKongA/miuix) · [Jetpack Compose](https://developer.android.com/jetpack/compose) · [HyperIsland](https://github.com/1812z/HyperIsland)（液态玻璃与动画参考）· [Hilt](https://dagger.dev/hilt/) · [Room](https://developer.android.com/jetpack/androidx/releases/room) · [OkHttp](https://square.github.io/okhttp/) · [Garmin FIT SDK](https://developer.garmin.com/fit/)
 
+## 签名
+
+`signing/debug.keystore` 是**故意提交到仓库**的固定 debug keystore，密码和别名都是 Android 默认值（`android` / `androiddebugkey`），没有任何保密价值。
+
+这样做的原因：GitHub Actions 每个 runner 都会临时生成一个随机的 debug key，导致 CI 产出的 APK 和本地构建的 APK 签名不同，无法互相覆盖安装。固定一份之后，本地和云端产出的 APK 可以互换。
+
+> ⚠️ debug 签名**不能用于上架应用商店**。要发布正式版时，请自己生成 release keystore，密码放进 GitHub Secrets，用 `signingConfigs` 读取，不要把 release key 提交到仓库。
+
+CI 中对应步骤见 `.github/workflows/android.yml` 的 `Use fixed debug keystore`。
+
 ## 许可证
 
 [Apache-2.0](LICENSE)。可以自由使用、修改、分发，**包括商业用途和闭源衍生**，只需保留版权声明与许可证副本；同时包含明确的专利授权（谁起诉专利侵权，授权自动终止）。
