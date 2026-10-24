@@ -39,14 +39,31 @@ jobs:
           echo "SDK_ROOT=$SDK_ROOT"
           ls "$SDK_ROOT/platforms"
 
-      # 用仓库里固定的 debug keystore。
-      # 不这么做的话，每个 runner 会用自己临时生成的 debug key，签名每次都不同，
-      # 导致 CI 产出的 APK 和本地 APK 无法互相覆盖安装。
-      - name: Use fixed debug keystore
+      # 签名准备：
+      # - 仓库配了 KEYSTORE_BASE64 等 Secrets → 用你自己的 release keystore（推荐，可上架）
+      # - 没配 → 回退到仓库里固定的 debug keystore（保证 CI 与本地产物签名一致）
+      # 两种情况下都不会出现"每次构建签名随机变化"的问题。
+      - name: Prepare signing
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          K_ALIAS: ${{ secrets.KEY_ALIAS }}
+          K_PASS: ${{ secrets.KEY_PASSWORD }}
         run: |
-          mkdir -p "$HOME/.android"
-          cp signing/debug.keystore "$HOME/.android/debug.keystore"
-          echo "keystore ready"
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fitsync.jks"
+            {
+              echo "KEYSTORE_PATH=$RUNNER_TEMP/fitsync.jks"
+              echo "KEYSTORE_PASSWORD=$KS_PASS"
+              echo "KEY_ALIAS=$K_ALIAS"
+              echo "KEY_PASSWORD=$K_PASS"
+            } >> "$GITHUB_ENV"
+            echo "签名：使用 Secrets 中的 release keystore"
+          else
+            mkdir -p "$HOME/.android"
+            cp signing/debug.keystore "$HOME/.android/debug.keystore"
+            echo "签名：未配置 Secrets，回退到固定 debug keystore"
+          fi
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew

@@ -92,13 +92,56 @@ core-ui/      UI 层：Miuix 主题、液态玻璃、页面骨架、通用组件
 
 ## 签名
 
-`signing/debug.keystore` 是**故意提交到仓库**的固定 debug keystore，密码和别名都是 Android 默认值（`android` / `androiddebugkey`），没有任何保密价值。
+支持两种签名方式，由环境变量自动切换，**两种都不会出现"每次构建签名随机变化"**。
 
-这样做的原因：GitHub Actions 每个 runner 都会临时生成一个随机的 debug key，导致 CI 产出的 APK 和本地构建的 APK 签名不同，无法互相覆盖安装。固定一份之后，本地和云端产出的 APK 可以互换。
+### 方式一：固定 debug keystore（默认）
 
-> ⚠️ debug 签名**不能用于上架应用商店**。要发布正式版时，请自己生成 release keystore，密码放进 GitHub Secrets，用 `signingConfigs` 读取，不要把 release key 提交到仓库。
+`signing/debug.keystore` 提交在仓库里，密码是 Android 规定的公开值（`android` / `androiddebugkey`）。
 
-CI 中对应步骤见 `.github/workflows/android.yml` 的 `Use fixed debug keystore`。
+- CI 没配 Secrets 时自动回退到它
+- 本地构建也用它（`build.gradle.kts` 里写死为兜底）
+- 用途：开发调试、开源分发
+
+> ⚠️ debug 签名**不能上架应用商店**，因为这份密钥是公开的，任何人都能签出同签名的包。
+
+### 方式二：自己的 release keystore（发布用）
+
+1. 生成 keystore（Termux 或电脑，需 JDK）：
+
+```bash
+keytool -genkeypair -v \
+  -keystore fitsync-release.jks -alias fitsync \
+  -keyalg RSA -keysize 4096 -validity 10000 \
+  -storepass 你的密码 \
+  -dname "CN=FitSync, OU=App, O=Personal, L=Beijing, ST=Beijing, C=CN"
+```
+
+2. 转成单行 Base64：
+
+```bash
+base64 -w 0 fitsync-release.jks
+```
+
+3. 在仓库 `Settings → Secrets and variables → Actions` 建四个 Secret：
+
+| Name | 内容 |
+|---|---|
+| `KEYSTORE_BASE64` | 上一步的输出 |
+| `KEYSTORE_PASSWORD` | store 密码 |
+| `KEY_ALIAS` | `fitsync` |
+| `KEY_PASSWORD` | key 密码 |
+
+4. CI 的 `Prepare signing` 步骤会解码并使用它；本地想用同一签名就导出环境变量：
+
+```bash
+export KEYSTORE_PATH=/path/to/fitsync-release.jks
+export KEYSTORE_PASSWORD=...
+export KEY_ALIAS=fitsync
+export KEY_PASSWORD=...
+./gradlew :app:assembleDebug
+```
+
+> 从 debug 签名切换到 release 签名后，手机上已安装的旧版**必须先卸载**才能装新版（签名不同）。
 
 ## 许可证
 
