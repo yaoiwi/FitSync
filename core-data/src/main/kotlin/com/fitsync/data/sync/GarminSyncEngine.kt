@@ -1,11 +1,16 @@
 package com.fitsync.data.sync
 
 import com.fitsync.data.db.AccountEntity
+import com.fitsync.data.db.AccountRegion
 import com.fitsync.data.db.AccountStatus
+import com.fitsync.data.db.BackfillShardEntity
+import com.fitsync.data.db.BackfillShardStatus
 import com.fitsync.data.db.ActivityEntity
+import com.fitsync.data.db.DailyHeartRateEntity
 import com.fitsync.data.db.DailySummaryEntity
 import com.fitsync.data.db.FitDataRepository
 import com.fitsync.data.db.SleepSessionEntity
+import com.fitsync.data.db.SleepStageEntity
 import com.fitsync.data.db.SourceType
 import com.fitsync.data.db.SyncCursorEntity
 import com.fitsync.data.db.SyncLogEntity
@@ -17,9 +22,11 @@ import com.fitsync.data.network.StorableCredential
 import com.fitsync.data.network.isTokenFresh
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
@@ -49,6 +56,7 @@ class GarminSyncEngine @Inject constructor(
     )
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+    private val monthFormatter = DateTimeFormatter.ofPattern("yyyy-MM")
 
     suspend fun syncAccount(accountId: Long, backfillDays: Int = 7): SyncOutcome =
         withContext(Dispatchers.IO) {
@@ -125,74 +133,13 @@ class GarminSyncEngine @Inject constructor(
 
         while (!day.isAfter(today)) {
             val date = day.format(dateFormatter)
-
-            val summary = connectClient.fetchDailySummary(
-                account.regionEnum(), token, account.displayName, date,
-            )
-            if (summary != null) {
-                repository.upsertDailySummaries(
-                    listOf(
-                        DailySummaryEntity(
-                            accountId = accountId,
-                            date = summary.date,
-                            steps = summary.steps,
-                            distanceM = summary.distanceM,
-                            floors = summary.floors,
-                            caloriesActive = summary.caloriesActive,
-                            caloriesResting = summary.caloriesResting,
-                            restingHr = summary.restingHr,
-                            stressAvg = summary.stressAvg,
-                            stressMax = summary.stressMax,
-                            bodyBatteryMin = summary.bodyBatteryMin,
-                            bodyBatteryMax = summary.bodyBatteryMax,
-                            spo2Avg = summary.spo2Avg,
-                        )
-                    )
-                )
-                records++
-            }
-
-            val sleep = connectClient.fetchSleep(
-                account.regionEnum(), token, account.displayName, date,
-            )
-            if (sleep != null) {
-                repository.upsertSleepSession(
-                    SleepSessionEntity(
-                        accountId = accountId,
-                        externalId = sleep.externalId,
-                        startTimeMs = sleep.startTimeMs,
-                        endTimeMs = sleep.endTimeMs,
-                        totalSleepMin = sleep.totalSleepMin,
-                        inBedMin = sleep.inBedMin,
-                        sleepScore = sleep.sleepScore,
-                        avgHr = sleep.avgHr,
-                        avgSpo2 = sleep.avgSpo2,
-                        avgBreathing = sleep.avgBreathing,
-                    )
-                )
-                records++
-            }
-
+            if (saveSummary(accountId, account.regionEnum(), token, account.displayName, date)) records++
+            if (saveSleep(accountId, account.regionEnum(), token, account.displayName, date)) records++
             day = day.plusDays(1)
         }
 
         connectClient.fetchActivities(account.regionEnum(), token, limit = 20).forEach { a ->
-            repository.upsertActivity(
-                ActivityEntity(
-                    accountId = accountId,
-                    externalId = a.externalId,
-                    sport = a.sport,
-                    activityType = a.name,
-                    startTimeMs = a.startTimeMs,
-                    durationSec = a.durationSec,
-                    distanceM = a.distanceM,
-                    avgHr = a.avgHr,
-                    maxHr = a.maxHr,
-                    calories = a.calories,
-                    elevationGainM = a.elevationGainM,
-                    hasGps = a.distanceM > 0,
-                )
-            )
+            saveActivity(accountId, a)
             records++
         }
 
@@ -202,6 +149,239 @@ class GarminSyncEngine @Inject constructor(
         advanceCursor(accountId, "sleep", todayText, doneAt)
         advanceCursor(accountId, "activity", todayText, doneAt)
         return records
+    }
+
+    // ============================ 落库（同步与回填共用） ============================
+
+    /** 返回 false 表示这一天没有数据（Garmin 对空日期会返回全 0，客户端已过滤成 null） */
+    private suspend fun saveSummary(
+        accountId: Long,
+        region: AccountRegion,
+        token: String,
+        displayName: String,
+        date: String,
+    ): Boolean {
+        val summary = connectClient.fetchDailySummary(region, token, displayName, date) ?: return false
+        repository.upsertDailySummaries(
+            listOf(
+                DailySummaryEntity(
+                    accountId = accountId,
+                    date = summary.date,
+                    steps = summary.steps,
+                    distanceM = summary.distanceM,
+                    floors = summary.floors,
+                    caloriesActive = summary.caloriesActive,
+                    caloriesResting = summary.caloriesResting,
+                    restingHr = summary.restingHr,
+                    stressAvg = summary.stressAvg,
+                    stressMax = summary.stressMax,
+                    bodyBatteryMin = summary.bodyBatteryMin,
+                    bodyBatteryMax = summary.bodyBatteryMax,
+                    spo2Avg = summary.spo2Avg,
+                )
+            )
+        )
+        // 日心率：接口给的是全天最低/最高/静息，够画一条长期曲线
+        if (summary.minHr > 0 || summary.maxHr > 0 || summary.restingHr > 0) {
+            repository.upsertDailyHeartRate(
+                listOf(
+                    DailyHeartRateEntity(
+                        accountId = accountId,
+                        date = summary.date,
+                        minHr = summary.minHr,
+                        maxHr = summary.maxHr,
+                        avgHr = 0,
+                        restingHr = summary.restingHr,
+                    )
+                )
+            )
+        }
+        return true
+    }
+
+    private suspend fun saveSleep(
+        accountId: Long,
+        region: AccountRegion,
+        token: String,
+        displayName: String,
+        date: String,
+    ): Boolean {
+        val sleep = connectClient.fetchSleep(region, token, displayName, date) ?: return false
+        // REPLACE 会换主键，先把旧分期删掉，避免留下孤儿行
+        repository.getSleepSessionByExternalId(accountId, sleep.externalId)?.let {
+            repository.deleteSleepStages(it.id)
+        }
+        val sessionId = repository.upsertSleepSession(
+            SleepSessionEntity(
+                accountId = accountId,
+                externalId = sleep.externalId,
+                startTimeMs = sleep.startTimeMs,
+                endTimeMs = sleep.endTimeMs,
+                totalSleepMin = sleep.totalSleepMin,
+                inBedMin = sleep.inBedMin,
+                sleepScore = sleep.sleepScore,
+                avgHr = sleep.avgHr,
+                avgSpo2 = sleep.avgSpo2,
+                avgBreathing = sleep.avgBreathing,
+            )
+        )
+        if (sleep.levels.isNotEmpty()) {
+            repository.upsertSleepStages(
+                sleep.levels.map { level ->
+                    SleepStageEntity(
+                        sleepSessionId = sessionId,
+                        stage = level.stage,
+                        startTimeMs = level.startMs,
+                        endTimeMs = level.endMs,
+                        durationMin = ((level.endMs - level.startMs) / 60_000L).toInt(),
+                    )
+                }
+            )
+        }
+        return true
+    }
+
+    private suspend fun saveActivity(accountId: Long, a: GarminConnectClient.Activity) {
+        // 保留本地主键：详情页拉的采样点是按 activity.id 关联的，换 id 会全部失联
+        val existing = repository.getActivityByExternalId(accountId, a.externalId)
+        repository.upsertActivity(
+            ActivityEntity(
+                id = existing?.id ?: 0L,
+                accountId = accountId,
+                externalId = a.externalId,
+                sport = a.sport,
+                activityType = a.name,
+                startTimeMs = a.startTimeMs,
+                durationSec = a.durationSec,
+                distanceM = a.distanceM,
+                avgHr = a.avgHr,
+                maxHr = a.maxHr,
+                calories = a.calories,
+                elevationGainM = a.elevationGainM,
+                hasGps = existing?.hasGps ?: (a.distanceM > 0),
+            )
+        )
+    }
+
+    /**
+     * 历史回填：过去 [days] 天的日汇总/睡眠，加上全量活动（分页翻到底）。
+     *
+     * 一年约 730 次请求，刻意限速 200ms/次；只由用户在前台手动触发，
+     * 进度通过 [onProgress] 回传，避免界面看起来像卡死。
+     */
+    suspend fun backfillHistory(
+        accountId: Long,
+        days: Int = 365,
+        onProgress: suspend (done: Int, total: Int, label: String) -> Unit = { _, _, _ -> },
+    ): SyncOutcome = withContext(Dispatchers.IO) {
+        val account = repository.getAccount(accountId)
+            ?: return@withContext SyncOutcome(false, 0, "账号不存在")
+        if (account.sourceType != SourceType.GARMIN.code) {
+            return@withContext SyncOutcome(false, 0, "本地导入账号无需回填")
+        }
+        val credential = credentialStore.load(
+            SourceType.GARMIN.code,
+            account.region,
+            account.externalUserId,
+        ) ?: return@withContext SyncOutcome(false, 0, "本地凭据缺失，请重新登录")
+
+        val startedAt = System.currentTimeMillis()
+        val region = account.regionEnum()
+        val today = LocalDate.now()
+        val from = today.minusDays(days.toLong().coerceAtLeast(1))
+        val total = ChronoUnit.DAYS.between(from, today).toInt() + 1
+
+        try {
+            val token = ensureToken(credential)
+            var records = 0
+            var done = 0
+
+            // 按月分片：已完成的月份直接跳过；当月因为天数在增长，会重新补一次。
+            // 中途被杀掉时，pending 分片还在，下次只补没跑完的月份。
+            val existing = repository.backfillShards(accountId, "health").associateBy { it.month }
+            val months = generateSequence(from.withDayOfMonth(1)) { it.plusMonths(1) }
+                .takeWhile { !it.isAfter(today.withDayOfMonth(1)) }
+                .toList()
+
+            val todo = months.mapNotNull { month ->
+                val monthStart = maxOf(month, from)
+                val monthEnd = minOf(month.plusMonths(1).minusDays(1), today)
+                val key = month.format(monthFormatter)
+                val old = existing[key]
+                if (old != null &&
+                    old.status == BackfillShardStatus.DONE.code &&
+                    old.endDate >= monthEnd.toString()
+                ) {
+                    null
+                } else {
+                    BackfillShardEntity(
+                        id = old?.id ?: 0L,
+                        accountId = accountId,
+                        dataDomain = "health",
+                        month = key,
+                        startDate = monthStart.toString(),
+                        endDate = monthEnd.toString(),
+                        status = BackfillShardStatus.PENDING.code,
+                        updatedAtMs = System.currentTimeMillis(),
+                    )
+                }
+            }
+            repository.upsertBackfillShards(todo)
+
+            val pending = repository.pendingBackfillShards(accountId)
+                .filter { it.dataDomain == "health" }
+            for (shard in pending) {
+                var day = LocalDate.parse(shard.startDate)
+                val end = LocalDate.parse(shard.endDate)
+                while (!day.isAfter(end)) {
+                    val date = day.format(dateFormatter)
+                    if (saveSummary(accountId, region, token, account.displayName, date)) records++
+                    if (saveSleep(accountId, region, token, account.displayName, date)) records++
+                    done++
+                    if (done % 5 == 0) onProgress(done, total, "已补到 $date")
+                    delay(200)
+                    day = day.plusDays(1)
+                }
+                repository.markBackfillShard(
+                    shard.id,
+                    BackfillShardStatus.DONE.code,
+                    System.currentTimeMillis(),
+                )
+                onProgress(done.coerceAtMost(total), total, "已完成 ${shard.month}")
+            }
+
+            var start = 0
+            val pageSize = 100
+            while (start < 3000) {
+                val page = connectClient.fetchActivities(region, token, limit = pageSize, start = start)
+                if (page.isEmpty()) break
+                page.forEach { saveActivity(accountId, it) }
+                records += page.size
+                onProgress(total, total, "已拉取活动 ${start + page.size} 条")
+                if (page.size < pageSize) break
+                start += pageSize
+                delay(300)
+            }
+
+            val todayText = today.format(dateFormatter)
+            val finishedAt = System.currentTimeMillis()
+            advanceCursor(accountId, "daily", todayText, finishedAt)
+            advanceCursor(accountId, "sleep", todayText, finishedAt)
+            advanceCursor(accountId, "activity", todayText, finishedAt)
+            repository.updateAccountStatus(accountId, AccountStatus.NORMAL.code, finishedAt)
+            log(accountId, ok = true, records = records, durationMs = finishedAt - startedAt)
+            SyncOutcome(true, records, "回填完成，共 $records 条")
+        } catch (e: Exception) {
+            val message = e.message ?: e.javaClass.simpleName
+            log(
+                accountId,
+                ok = false,
+                records = 0,
+                durationMs = System.currentTimeMillis() - startedAt,
+                error = message,
+            )
+            SyncOutcome(false, 0, message)
+        }
     }
 
     /** 同步所有启用账号；返回总体结果，供 UI 与 Worker 使用 */

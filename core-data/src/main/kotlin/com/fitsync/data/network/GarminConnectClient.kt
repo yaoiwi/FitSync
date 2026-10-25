@@ -69,6 +69,15 @@ class GarminConnectClient @Inject constructor(
         val avgHr: Int,
         val avgSpo2: Int,
         val avgBreathing: Double,
+        /** 睡眠分期（深睡/浅睡/REM/清醒），为空表示接口没给 */
+        val levels: List<SleepLevel> = emptyList(),
+    )
+
+    /** 一段睡眠阶段，时间来自 `dailySleepDTO.sleepLevels` */
+    data class SleepLevel(
+        val startMs: Long,
+        val endMs: Long,
+        val stage: String,
     )
 
     data class Activity(
@@ -160,19 +169,68 @@ class GarminConnectClient @Inject constructor(
             avgHr = dto.optInt("avgHeartRate"),
             avgSpo2 = dto.optInt("averageSpO2Value"),
             avgBreathing = dto.optDouble("averageRespirationValue", 0.0),
+            levels = parseSleepLevels(dto),
         )
+    }
+
+    /**
+     * 解析 `sleepLevels`。
+     *
+     * Garmin 对同一段睡眠给的 activityLevel 约定：
+     * 0 = deep、1 = light、2 = rem、3 = awake。
+     * 时间字段在不同版本里可能是毫秒数，也可能是 `yyyy-MM-dd'T'HH:mm:ss` 字符串，
+     * 这里两种都认，解析不出来的整段跳过，绝不让一条脏数据拖垮整晚睡眠。
+     */
+    private fun parseSleepLevels(dto: JSONObject): List<SleepLevel> {
+        val arr = dto.optJSONArray("sleepLevels") ?: return emptyList()
+        val out = ArrayList<SleepLevel>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val start = parseGmtValue(o.opt("startGMT"))
+            val end = parseGmtValue(o.opt("endGMT"))
+            if (start <= 0L || end <= start) continue
+            val stage = when (o.optInt("activityLevel", -1)) {
+                0 -> "deep"
+                1 -> "light"
+                2 -> "rem"
+                3 -> "awake"
+                else -> continue
+            }
+            out += SleepLevel(startMs = start, endMs = end, stage = stage)
+        }
+        return out
+    }
+
+    /** sleepLevels 的时间既可能是 epoch 毫秒，也可能是 ISO 字符串 */
+    private fun parseGmtValue(raw: Any?): Long = when (raw) {
+        null -> 0L
+        is Number -> {
+            val v = raw.toLong()
+            if (v > 10_000_000_000L) v else v * 1000L
+        }
+        is String -> {
+            val text = raw.trim()
+            val plain = text.substringBefore('.').replace("Z", "")
+            runCatching {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
+                    .apply { timeZone = TimeZone.getTimeZone("UTC") }
+                    .parse(plain)?.time ?: 0L
+            }.getOrDefault(0L)
+        }
+        else -> 0L
     }
 
     fun fetchActivities(
         region: AccountRegion,
         accessToken: String,
         limit: Int = 20,
+        start: Int = 0,
     ): List<Activity> {
         val ep = endpoints(region)
         val url = (ep.apiBase + "/activitylist-service/activities/search/activities").toHttpUrl()
             .newBuilder()
             .addQueryParameter("limit", limit.toString())
-            .addQueryParameter("start", "0")
+            .addQueryParameter("start", start.toString())
             .build()
 
         val text = getText(url, accessToken) ?: return emptyList()

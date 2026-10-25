@@ -95,6 +95,9 @@ class FitDataRepositoryImpl @Inject constructor(
     override fun observeRecentSyncLogs(accountId: Long): Flow<List<SyncLogEntity>> =
         logDao.observeRecent(accountId)
 
+    override fun observeAllRecentSyncLogs(limit: Int): Flow<List<SyncLogEntity>> =
+        logDao.observeRecentAll(limit)
+
     override suspend fun acquireSyncLock(lock: SyncLockEntity) =
         lockDao.acquire(lock)
 
@@ -106,6 +109,12 @@ class FitDataRepositoryImpl @Inject constructor(
 
     override suspend fun pendingBackfillShards(accountId: Long) =
         backfillDao.pending(accountId)
+
+    override suspend fun backfillShards(accountId: Long, domain: String) =
+        backfillDao.all(accountId, domain)
+
+    override suspend fun markBackfillShard(id: Long, status: String, ts: Long) =
+        backfillDao.mark(id, status, ts)
 
     // ==================== 运动域 ====================
     override fun observeActivities(accountId: Long): Flow<List<ActivityEntity>> =
@@ -119,6 +128,9 @@ class FitDataRepositoryImpl @Inject constructor(
 
     override suspend fun getActivity(activityId: Long) =
         activityDao.getById(activityId)
+
+    override suspend fun getActivityByExternalId(accountId: Long, externalId: String) =
+        activityDao.byExternalId(accountId, externalId)
 
     override suspend fun upsertActivity(activity: ActivityEntity): Long =
         activityDao.upsert(activity)
@@ -226,8 +238,17 @@ class FitDataRepositoryImpl @Inject constructor(
     override suspend fun upsertSleepSession(session: SleepSessionEntity): Long =
         sleepDao.upsert(session)
 
+    override suspend fun getSleepSessionByExternalId(accountId: Long, externalId: String) =
+        sleepDao.byExternalId(accountId, externalId)
+
     override suspend fun upsertSleepStages(stages: List<SleepStageEntity>) =
         sleepStageDao.upsertAll(stages)
+
+    override suspend fun deleteSleepStages(sessionId: Long) =
+        sleepStageDao.deleteBySession(sessionId)
+
+    override fun observeSleepStages(sessionId: Long): Flow<List<SleepStageEntity>> =
+        sleepStageDao.observeBySession(sessionId)
 
     override suspend fun upsertHeartRateSamples(list: List<HeartRateSampleEntity>) =
         hrDao.upsertAll(list)

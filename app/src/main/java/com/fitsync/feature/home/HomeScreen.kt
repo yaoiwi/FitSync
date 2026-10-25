@@ -4,7 +4,9 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,12 +43,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import android.widget.Toast
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -114,15 +119,24 @@ fun HomeScreen(
     onOpenImport: () -> Unit = {},
     onOpenCopyActivities: () -> Unit = {},
     onOpenCopyHealth: () -> Unit = {},
+    onOpenSyncLogs: () -> Unit = {},
+    onOpenExport: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     // 外观模式：设置页改了之后这里会重读，整页立刻切色板
     val themeMode by remember(context) { ThemeModePref.flow(context) }
         .collectAsState(initial = ThemeModePref.FOLLOW)
     val accounts by viewModel.accounts.collectAsState()
     val accountsLoaded by viewModel.accountsLoaded.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
+    val trends by viewModel.trends.collectAsState()
+    val sleepStages by viewModel.sleepStages.collectAsState()
+    val autoSyncOnOpen by viewModel.autoSyncOnOpen.collectAsState()
+    val syncIntervalHours by viewModel.syncIntervalHours.collectAsState()
+    val wifiOnly by viewModel.wifiOnly.collectAsState()
+    val backfillDays by viewModel.backfillDays.collectAsState()
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -218,9 +232,10 @@ fun HomeScreen(
                     when (tab) {
                             0 -> OverviewTab(
                                 dashboard = dashboard,
-                                accounts = accounts,
-                                primaryAccountId = primaryAccountId,
+                                trends = trends,
+                                sleepStages = sleepStages,
                                 syncing = syncState.syncing,
+                                silent = syncState.silent,
                                 message = syncState.message,
                                 onSync = viewModel::syncNow,
                                 onSeeAccounts = { tab = 2 },
@@ -247,6 +262,7 @@ fun HomeScreen(
                                 onCopyActivities = onOpenCopyActivities,
                                 canCopyHealth = accounts.count { it.sourceType == "garmin" } >= 2,
                                 onCopyHealth = onOpenCopyHealth,
+                                onExport = onOpenExport,
                                 onOpenAccount = onOpenAccounts,
                             )
                             else -> SettingsTab(
@@ -257,6 +273,36 @@ fun HomeScreen(
                                 onOpenAccounts = onOpenAccounts,
                                 onOpenChangelog = onOpenChangelog,
                                 onOpenAcknowledgements = onOpenAcknowledgements,
+                                onOpenSyncLogs = onOpenSyncLogs,
+                                onBackfill = viewModel::backfillHistory,
+                                autoSyncOnOpen = autoSyncOnOpen,
+                                onAutoSyncChange = viewModel::setAutoSyncOnOpen,
+                                syncIntervalHours = syncIntervalHours,
+                                onSyncIntervalChange = viewModel::setSyncInterval,
+                                wifiOnly = wifiOnly,
+                                onWifiOnlyChange = viewModel::setWifiOnly,
+                                backfillDays = backfillDays,
+                                onBackfillDaysChange = viewModel::setBackfillDays,
+                                onBackupDatabase = { uri ->
+                                    scope.launch {
+                                        val msg = runCatching { viewModel.backupDatabase(uri) }
+                                            .fold(
+                                                { "已备份 ${it / 1024} KB" },
+                                                { "备份失败：${it.message ?: "未知错误"}" },
+                                            )
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                },
+                                onRestoreDatabase = { uri ->
+                                    scope.launch {
+                                        val msg = runCatching { viewModel.restoreDatabase(uri) }
+                                            .fold(
+                                                { "已准备恢复，重启 App 后生效" },
+                                                { "恢复失败：${it.message ?: "未知错误"}" },
+                                            )
+                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                    }
+                                },
                             )
                     }
                 }
@@ -273,11 +319,36 @@ private fun ActivityTab(
     syncing: Boolean,
     onOpenActivity: (Long) -> Unit = {},
 ) {
+    var typeFilter by remember { mutableStateOf<String?>(null) }
+    var monthFilter by remember { mutableStateOf<String?>(null) }
+    var query by remember { mutableStateOf("") }
+
+    val monthFormat = remember { SimpleDateFormat("yyyy-MM", Locale.CHINA) }
+    val types = remember(activities) { activities.map { sportGroup(it.sport) }.distinct() }
+    val months = remember(activities) {
+        activities.map { monthFormat.format(Date(it.startTimeMs)) }
+            .distinct().sortedDescending().take(6)
+    }
+
+    val filtered = remember(activities, typeFilter, monthFilter, query) {
+        activities.filter { a ->
+            val matchType = typeFilter == null || sportGroup(a.sport) == typeFilter
+            val matchMonth = monthFilter == null ||
+                monthFormat.format(Date(a.startTimeMs)) == monthFilter
+            val matchQuery = query.isBlank() ||
+                a.activityType.contains(query, ignoreCase = true) ||
+                sportLabel(a.sport).contains(query, ignoreCase = true) ||
+                sportLabel(a.activityType).contains(query, ignoreCase = true)
+            matchType && matchMonth && matchQuery
+        }
+    }
+
     HyperPage(
         title = "活动",
         subtitle = when {
             syncing -> "正在同步…"
             activities.isEmpty() -> "还没有运动记录"
+            filtered.size != activities.size -> "${filtered.size} / ${activities.size} 条"
             else -> "${activities.size} 条 · 跑步 / 骑行 / 健身"
         },
     ) {
@@ -293,7 +364,7 @@ private fun ActivityTab(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "只拉最近 20 条；两个区的记录按时间合并。",
+                            text = "只拉最近 20 条；想要更早的记录，去设置里点「回填历史」。",
                             fontSize = 12.5.sp,
                             color = MiuixSummary,
                             lineHeight = 18.sp,
@@ -302,22 +373,57 @@ private fun ActivityTab(
                 }
             }
         } else {
-            val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-            val titleFormat = SimpleDateFormat("M月d日 EEEE", Locale.CHINA)
-            val grouped = activities
-                .groupBy { dayFormat.format(Date(it.startTimeMs)) }
-                .toSortedMap(compareByDescending { it })
-
-            grouped.forEach { (day, list) ->
+            item {
+                SearchBox(value = query, onValueChange = { query = it })
+            }
+            if (types.size > 1) {
                 item {
-                    val dayTitle = runCatching {
-                        titleFormat.format(dayFormat.parse(day)!!)
-                    }.getOrDefault(day)
-                    MiuixSectionTitle(dayTitle)
+                    FilterChipRow(
+                        options = listOf("全部运动" to null) + types.map { sportGroupLabel(it) to it },
+                        selected = typeFilter,
+                        onSelect = { typeFilter = it },
+                    )
+                }
+            }
+            if (months.size > 1) {
+                item {
+                    FilterChipRow(
+                        options = listOf("全部月份" to null) + months.map { it to it },
+                        selected = monthFilter,
+                        onSelect = { monthFilter = it },
+                    )
+                }
+            }
+
+            if (filtered.isEmpty()) {
+                item {
                     MiuixCard {
-                        list.forEachIndexed { index, activity ->
-                            ActivityRow(activity) { onOpenActivity(activity.id) }
-                            if (index != list.lastIndex) MiuixDivider(startIndent = 72)
+                        Text(
+                            text = "没有符合条件的记录",
+                            fontSize = 14.sp,
+                            color = MiuixSummary,
+                            modifier = Modifier.padding(horizontal = 18.dp, vertical = 22.dp),
+                        )
+                    }
+                }
+            } else {
+                val dayFormat = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
+                val titleFormat = SimpleDateFormat("M月d日 EEEE", Locale.CHINA)
+                val grouped = filtered
+                    .groupBy { dayFormat.format(Date(it.startTimeMs)) }
+                    .toSortedMap(compareByDescending { it })
+
+                grouped.forEach { (day, list) ->
+                    item {
+                        val dayTitle = runCatching {
+                            titleFormat.format(dayFormat.parse(day)!!)
+                        }.getOrDefault(day)
+                        MiuixSectionTitle(dayTitle)
+                        MiuixCard {
+                            list.forEachIndexed { index, activity ->
+                                ActivityRow(activity) { onOpenActivity(activity.id) }
+                                if (index != list.lastIndex) MiuixDivider(startIndent = 72)
+                            }
                         }
                     }
                 }
@@ -326,15 +432,96 @@ private fun ActivityTab(
     }
 }
 
+@Composable
+private fun SearchBox(value: String, onValueChange: (String) -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MiuixCardSurface)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+    ) {
+        if (value.isEmpty()) {
+            Text(text = "搜索运动类型或名称", fontSize = 13.5.sp, color = MiuixSummary)
+        }
+        androidx.compose.foundation.text.BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = 14.sp, color = MiuiText1),
+            cursorBrush = androidx.compose.ui.graphics.SolidColor(MiuixPrimary),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun FilterChipRow(
+    options: List<Pair<String, String?>>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    val tick = rememberTick()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            // 类型行与月份行是两个 item，没有上下间距会紧贴在一起
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 2.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        options.forEach { (label, value) ->
+            val active = selected == value
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(if (active) MiuixPrimary else MiuixCardSurface)
+                    .clickable {
+                        tick()
+                        onSelect(value)
+                    }
+                    .padding(horizontal = 12.dp, vertical = 7.dp),
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 12.5.sp,
+                    color = if (active) Color.White else MiuiText1,
+                )
+            }
+        }
+    }
+}
+
+/** 把 Garmin 的一大串 typeKey 归成六类，筛选才有意义 */
+private fun sportGroup(sport: String): String = when (sport.lowercase(Locale.US)) {
+    "running", "run", "trail_running", "treadmill_running", "track_running" -> "run"
+    "cycling", "biking", "road_biking", "mountain_biking", "indoor_cycling" -> "ride"
+    "swimming", "lap_swimming", "open_water_swimming" -> "swim"
+    "walking", "hiking" -> "walk"
+    "strength_training", "indoor_cardio", "yoga", "pilates", "hiit" -> "strength"
+    else -> "other"
+}
+
+private fun sportGroupLabel(group: String): String = when (group) {
+    "run" -> "跑步"
+    "ride" -> "骑行"
+    "swim" -> "游泳"
+    "walk" -> "步行"
+    "strength" -> "力量"
+    else -> "其它"
+}
+
 // ============================ 概览 ============================
 
 @OptIn(ExperimentalMaterialApi::class)
 @Composable
 private fun OverviewTab(
     dashboard: HomeViewModel.Dashboard,
-    accounts: List<AccountEntity>,
-    primaryAccountId: Long?,
+    trends: HomeViewModel.Trends,
+    sleepStages: List<com.fitsync.data.db.SleepStageEntity>,
     syncing: Boolean,
+    silent: Boolean = false,
     message: String?,
     onSync: () -> Unit,
     onSeeAccounts: () -> Unit,
@@ -342,15 +529,13 @@ private fun OverviewTab(
     todayMetricIndex: Int = 0,
     onTodayMetricSelect: (Int) -> Unit = {},
 ) {
-    val primaryName = accounts.firstOrNull { it.id == primaryAccountId }
-        ?.let { it.displayName.ifBlank { it.externalUserId } }
     val tick = rememberTick()
 
     HyperPage(
         title = "概览",
-        subtitle = SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date()) +
-            if (primaryName != null) " · 主账号 $primaryName" else " · 未设主账号",
-        isRefreshing = syncing,
+        subtitle = SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date()),
+        // 自动同步不转圈：页面一打开就转十几秒，很像卡死
+        isRefreshing = syncing && !silent,
         onRefresh = onSync,
         listModifier = Modifier.testTag("dashboard"),
         actions = {
@@ -451,6 +636,10 @@ private fun OverviewTab(
                 }
             }
 
+            if (trends.hasData) {
+                item { WeekCard(trends = trends) }
+            }
+
             item {
                 MiuixSectionTitle("健康")
                 MiuixCard {
@@ -466,6 +655,9 @@ private fun OverviewTab(
                             )
                         },
                     )
+                    if (sleepStages.isNotEmpty()) {
+                        SleepStageBar(sleepStages)
+                    }
                     MiuixDivider(startIndent = 72)
                     MiuixRow(
                         title = "睡眠平均心率",
@@ -490,6 +682,10 @@ private fun OverviewTab(
                         },
                     )
                 }
+            }
+
+            item {
+                TrendCard(trends = trends)
             }
 
             if (dashboard.activities.isNotEmpty()) {
@@ -580,6 +776,7 @@ private fun AccountsTab(
     onCopyActivities: () -> Unit,
     canCopyHealth: Boolean,
     onCopyHealth: () -> Unit,
+    onExport: () -> Unit = {},
     onOpenAccount: () -> Unit = {},
 ) {
     val tick = rememberTick()
@@ -636,6 +833,13 @@ private fun AccountsTab(
                     summary = "支持 zip / JSON / CSV 导出包",
                     showArrow = true,
                     onClick = onImport,
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "导出数据",
+                    summary = "保存为 JSON 或 CSV（ZIP）",
+                    showArrow = true,
+                    onClick = onExport,
                 )
                 if (canCopyActivities) {
                     MiuixDivider()
@@ -763,11 +967,35 @@ private fun SettingsTab(
     onOpenAccounts: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
     onOpenAcknowledgements: () -> Unit = {},
+    onOpenSyncLogs: () -> Unit = {},
+    onBackfill: () -> Unit = {},
+    autoSyncOnOpen: Boolean = true,
+    onAutoSyncChange: (Boolean) -> Unit = {},
+    syncIntervalHours: Long = 6L,
+    onSyncIntervalChange: (Long) -> Unit = {},
+    wifiOnly: Boolean = false,
+    onWifiOnlyChange: (Boolean) -> Unit = {},
+    backfillDays: Int = 365,
+    onBackfillDaysChange: (Int) -> Unit = {},
+    onBackupDatabase: (android.net.Uri) -> Unit = {},
+    onRestoreDatabase: (android.net.Uri) -> Unit = {},
 ) {
     val themeOptions = listOf("跟随系统", "浅色", "深色")
     val themeCodes = listOf(ThemeModePref.FOLLOW, ThemeModePref.LIGHT, ThemeModePref.DARK)
     val settingsContext = LocalContext.current
     var hapticsOn by remember { mutableStateOf(Haptics.isEnabled(settingsContext)) }
+    val intervalValues = listOf(6L, 12L, 24L, 0L)
+    val intervalIndex = intervalValues.indexOf(syncIntervalHours).let { if (it < 0) 0 else it }
+    val backfillValues = listOf(30, 90, 365)
+    val backfillIndex = backfillValues.indexOf(backfillDays).let { if (it < 0) 2 else it }
+
+    val backupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri -> uri?.let(onBackupDatabase) }
+    val restoreLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+    ) { uri -> uri?.let(onRestoreDatabase) }
+
     HyperPage(
         title = "设置",
         subtitle = "外观、同步策略与版本信息",
@@ -778,12 +1006,75 @@ private fun SettingsTab(
                 MiuixRow(
                     title = "打开即同步",
                     summary = "进入前台自动拉取，5 分钟内不重复",
-                    trailing = { Text("已开启", fontSize = 14.sp, color = MiuixSummary) },
+                    trailing = {
+                        MiuixSwitch(
+                            checked = autoSyncOnOpen,
+                            onCheckedChange = { enabled ->
+                                onAutoSyncChange(enabled)
+                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                            },
+                        )
+                    },
+                )
+                MiuixDivider()
+                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Text(text = "后台同步", fontSize = 16.sp, color = MiuiText1)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "选「仅手动」就不再后台联网，只在你点同步时拉取",
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = MiuixSummary,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    MiuixSegmentedControl(
+                        options = listOf("6 小时", "12 小时", "24 小时", "仅手动"),
+                        selectedIndex = intervalIndex,
+                        onSelect = { index ->
+                            onSyncIntervalChange(intervalValues[index])
+                            Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                        },
+                    )
+                }
+                MiuixDivider()
+                MiuixRow(
+                    title = "仅 Wi-Fi 自动同步",
+                    summary = "移动网络下跳过自动同步，手动同步不受限",
+                    trailing = {
+                        MiuixSwitch(
+                            checked = wifiOnly,
+                            onCheckedChange = { enabled ->
+                                onWifiOnlyChange(enabled)
+                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                            },
+                        )
+                    },
                 )
                 MiuixDivider()
                 MiuixRow(
-                    title = "同步范围",
-                    summary = "最近 7 天回填，之后按日增量",
+                    title = "回填历史",
+                    summary = "拉取过去一年的日汇总、睡眠与全部活动（较慢）",
+                    showArrow = true,
+                    onClick = onBackfill,
+                )
+                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                    Text(text = "回填范围", fontSize = 12.sp, color = MiuixSummary)
+                    Spacer(Modifier.height(8.dp))
+                    MiuixSegmentedControl(
+                        options = listOf("30 天", "90 天", "1 年"),
+                        selectedIndex = backfillIndex,
+                        onSelect = { index ->
+                            onBackfillDaysChange(backfillValues[index])
+                            Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                        },
+                    )
+                }
+                MiuixDivider()
+                MiuixRow(
+                    title = "同步记录",
+                    summary = "每次同步的时间、条数与失败原因",
+                    showArrow = true,
+                    onClick = onOpenSyncLogs,
                 )
                 MiuixDivider()
                 MiuixRow(
@@ -792,6 +1083,29 @@ private fun SettingsTab(
                     trailing = { Text("$accountCount 个", fontSize = 14.sp, color = MiuixSummary) },
                     showArrow = true,
                     onClick = onOpenAccounts,
+                )
+            }
+        }
+
+        item {
+            MiuixSectionTitle("数据")
+            MiuixCard {
+                MiuixRow(
+                    title = "备份数据库",
+                    summary = "完整导出，换机时可直接恢复",
+                    showArrow = true,
+                    onClick = { backupLauncher.launch("fitsync-backup.db") },
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "恢复数据库",
+                    summary = "会覆盖当前数据，完成后需重启 App",
+                    showArrow = true,
+                    onClick = {
+                        restoreLauncher.launch(
+                            arrayOf("application/octet-stream", "application/x-sqlite3")
+                        )
+                    },
                 )
             }
         }
@@ -956,3 +1270,74 @@ private fun openExternal(context: Context, url: String) {
 
 private const val PROJECT_URL = "https://github.com/yaoiwi/FitSync"
 private const val ISSUES_URL = "https://github.com/yaoiwi/FitSync/issues"
+
+// ============================ 睡眠分期条 ============================
+
+/**
+ * 一晚睡眠的阶段分布：按各段时长占比拼一条彩色带，下面配一行图例。
+ *
+ * 只画相对时长，不画具体时钟刻度——首页要的是"深睡够不够、有没有醒"，
+ * 精确时间点留给以后的睡眠详情页。
+ */
+@Composable
+private fun SleepStageBar(stages: List<com.fitsync.data.db.SleepStageEntity>) {
+    val totalMs = stages.sumOf { (it.endTimeMs - it.startTimeMs).coerceAtLeast(0L) }
+    if (totalMs <= 0L) return
+
+    val summary = stages.groupBy { it.stage }
+        .mapValues { (_, list) -> list.sumOf { (it.endTimeMs - it.startTimeMs).coerceAtLeast(0L) } / 60_000L }
+
+    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(10.dp)
+                .clip(RoundedCornerShape(5.dp)),
+        ) {
+            stages.forEach { stage ->
+                val weight = ((stage.endTimeMs - stage.startTimeMs).toFloat() / totalMs)
+                    .coerceAtLeast(0.002f)
+                Box(
+                    modifier = Modifier
+                        .weight(weight)
+                        .height(10.dp)
+                        .background(stageColor(stage.stage)),
+                )
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            listOf(
+                "deep" to "深睡",
+                "light" to "浅睡",
+                "rem" to "REM",
+                "awake" to "清醒",
+            ).forEach { (key, label) ->
+                val minutes = summary[key] ?: 0L
+                if (minutes > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(stageColor(key)),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "$label ${minutes}分",
+                            fontSize = 10.5.sp,
+                            color = MiuixSummary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun stageColor(stage: String): Color = when (stage) {
+    "deep" -> Color(0xFF2C4A8A)
+    "rem" -> Color(0xFF8E7BFF)
+    "awake" -> Color(0xFFFFB340)
+    else -> Color(0xFF6FA8FF)
+}

@@ -3,6 +3,8 @@ package com.fitsync.data.db
 import androidx.room.Database
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
  * Room 数据库：19 张表统一纳入 `fitsync.db`（第 4 章）。
@@ -33,13 +35,27 @@ import androidx.room.TypeConverters
         BodyMetricEntity::class,
         DeviceEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 @TypeConverters(Converters.StringTypeConverter::class, Converters.LongStringConverter::class)
 abstract class FitSyncDatabase : RoomDatabase() {
     companion object {
         const val DB_NAME = "fitsync.db"
+
+        /**
+         * v1 → v2：`activity_samples` 增加 `speed_ms`（配速曲线用）。
+         *
+         * 之前这里靠 `fallbackToDestructiveMigration()` 兜底，升级即清库。
+         * 有了真实用户数据之后不能再这么干，必须显式迁移。
+         */
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE activity_samples ADD COLUMN speed_ms REAL NOT NULL DEFAULT 0"
+                )
+            }
+        }
     }
 
     abstract fun accountDao(): AccountDao

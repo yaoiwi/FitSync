@@ -1,6 +1,8 @@
 package com.fitsync.feature.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -21,6 +23,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -28,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.data.db.AccountEntity
+import com.fitsync.data.db.ActivityLapEntity
 import com.fitsync.data.db.ActivityEntity
 import com.fitsync.feature.home.HomeViewModel
 import com.fitsync.ui.components.GlassHost
@@ -360,6 +364,10 @@ fun ActivityDetailScreen(
     val activity = dashboard.activities.firstOrNull { it.id == activityId }
     val samples by detailViewModel.samples.collectAsState()
     val routes by detailViewModel.routes.collectAsState()
+    val laps by detailViewModel.laps.collectAsState()
+    val shareContext = LocalContext.current
+    val loadingSamples by detailViewModel.loading.collectAsState()
+    val sampleNote by detailViewModel.note.collectAsState()
 
     FitSyncTheme {
         GlassHost(modifier = Modifier.fillMaxSize()) {
@@ -371,6 +379,19 @@ fun ActivityDetailScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(MiuixIcons.Back, contentDescription = "返回")
+                    }
+                },
+                actions = {
+                    if (activity != null) {
+                        Text(
+                            text = "分享",
+                            fontSize = 15.sp,
+                            color = MiuixPrimary,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(10.dp))
+                                .clickable { ShareCard.share(shareContext, activity) }
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                        )
                     }
                 },
             ) {
@@ -387,6 +408,38 @@ fun ActivityDetailScreen(
                     }
                 } else {
                     item { ActivityHero(activity) }
+
+                    // 采样点是进页面时按需下载的：给出进度与失败原因，别让空白图表自己说话
+                    if (loadingSamples) {
+                        item {
+                            MiuixCard {
+                                Text(
+                                    text = "正在获取原始数据…",
+                                    fontSize = 13.sp,
+                                    color = MiuixSummary,
+                                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp),
+                                )
+                            }
+                        }
+                    } else if (sampleNote != null) {
+                        item {
+                            MiuixCard {
+                                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
+                                    Text(
+                                        text = sampleNote ?: "",
+                                        fontSize = 13.sp,
+                                        lineHeight = 18.sp,
+                                        color = MiuixSummary,
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    MiuixTextButton(
+                                        text = "重试",
+                                        onClick = { detailViewModel.retry() },
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // 有 FIT 数据才显示轨迹与曲线（旧数据来自摘要接口，没有采样点）
                     if (routes.isNotEmpty()) {
@@ -417,8 +470,11 @@ fun ActivityDetailScreen(
                         }
                     }
 
-                    // 速度只在轨迹点里有（采样表存的是心率/步频/功率/海拔）
-                    val speedValues = routes.map { it.speedMs.toFloat() }.filter { it > 0.3f }
+                    // 配速优先用采样表里的瞬时速度；老数据（FIT 导入前的轨迹）退回 route 里的速度
+                    val sampleSpeeds = samples.map { it.speedMs.toFloat() }.filter { it > 0.3f }
+                    val speedValues = sampleSpeeds.ifEmpty {
+                        routes.map { it.speedMs.toFloat() }.filter { it > 0.3f }
+                    }
                     if (speedValues.size >= 2) {
                         item {
                             ChartCard(
@@ -430,6 +486,15 @@ fun ActivityDetailScreen(
                                 values = speedValues,
                                 color = Color(0xFF3482FF),
                             )
+                        }
+                    }
+
+                    if (hrValues.size >= 20) {
+                        item {
+                            MiuixSectionTitle("心率区间")
+                            MiuixCard {
+                                HrZoneBlock(hrValues, activity.maxHr)
+                            }
                         }
                     }
 
@@ -445,6 +510,57 @@ fun ActivityDetailScreen(
                                 values = elevValues,
                                 color = Color(0xFF34C759),
                             )
+                        }
+                    }
+
+                    val cadenceValues = samples.map { it.cadence.toFloat() }.filter { it > 0f }
+                    if (cadenceValues.size >= 2) {
+                        item {
+                            ChartCard(
+                                title = "步频",
+                                range = "%.0f – %.0f 步/分".format(
+                                    cadenceValues.minOrNull() ?: 0f,
+                                    cadenceValues.maxOrNull() ?: 0f,
+                                ),
+                                values = cadenceValues,
+                                color = Color(0xFF34C759),
+                            )
+                        }
+                    }
+
+                    val powerValues = samples.map { it.powerW.toFloat() }.filter { it > 0f }
+                    if (powerValues.size >= 2) {
+                        item {
+                            ChartCard(
+                                title = "功率",
+                                range = "%.0f – %.0f W".format(
+                                    powerValues.minOrNull() ?: 0f,
+                                    powerValues.maxOrNull() ?: 0f,
+                                ),
+                                values = powerValues,
+                                color = Color(0xFFFF9F0A),
+                            )
+                        }
+                    }
+
+                    if (laps.isNotEmpty()) {
+                        item {
+                            MiuixSectionTitle("分段")
+                            MiuixCard {
+                                val shown = laps.take(12)
+                                shown.forEachIndexed { index, lap ->
+                                    LapRow(lap)
+                                    if (index != shown.lastIndex) MiuixDivider()
+                                }
+                                if (laps.size > shown.size) {
+                                    Text(
+                                        text = "共 ${laps.size} 段，这里显示前 ${shown.size} 段",
+                                        fontSize = 12.sp,
+                                        color = MiuixSummary,
+                                        modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -584,4 +700,123 @@ private fun paceText(activity: ActivityEntity): String {
     val m = (secondsPerKm / 60).toInt()
     val s = (secondsPerKm % 60).toInt()
     return "%d'%02d\"/km".format(m, s)
+}
+
+// ============================ 分段与心率区间 ============================
+
+@Composable
+private fun LapRow(lap: ActivityLapEntity) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 11.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "${lap.lap}",
+            fontSize = 13.sp,
+            color = MiuixSummary,
+            modifier = Modifier.width(28.dp),
+        )
+        Text(
+            text = if (lap.distanceM > 0) "%.2f km".format(lap.distanceM / 1000) else "—",
+            fontSize = 14.sp,
+            color = MiuiText1,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = lapPace(lap.durationSec, lap.distanceM),
+            fontSize = 13.sp,
+            color = MiuixPrimary,
+            modifier = Modifier.width(80.dp),
+        )
+        Text(
+            text = if (lap.avgHr > 0) "${lap.avgHr} bpm" else "—",
+            fontSize = 13.sp,
+            color = MiuixSummary,
+            modifier = Modifier.width(66.dp),
+        )
+    }
+}
+
+private fun lapPace(durationSec: Long, distanceM: Double): String {
+    if (distanceM <= 1.0 || durationSec <= 0) return "—"
+    val secPerKm = durationSec / (distanceM / 1000.0)
+    return "%d'%02d\"".format((secPerKm / 60).toInt(), (secPerKm % 60).toInt())
+}
+
+/**
+ * 心率区间分布。
+ *
+ * 用样本数量近似时长（FIT 采样间隔基本固定），最大心率优先取这条活动记录到的值；
+ * 没有记录就用样本峰值，至少保证比例是自洽的。
+ */
+@Composable
+private fun HrZoneBlock(values: List<Float>, recordedMax: Int) {
+    val maxHr = if (recordedMax > 0) recordedMax.toFloat() else (values.maxOrNull() ?: 0f)
+    if (maxHr <= 0f) return
+
+    val counts = IntArray(5)
+    values.forEach { hr ->
+        val ratio = hr / maxHr
+        val index = when {
+            ratio < 0.6f -> 0
+            ratio < 0.7f -> 1
+            ratio < 0.8f -> 2
+            ratio < 0.9f -> 3
+            else -> 4
+        }
+        counts[index]++
+    }
+    val total = counts.sum().coerceAtLeast(1)
+
+    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(12.dp)
+                .clip(RoundedCornerShape(6.dp)),
+        ) {
+            counts.forEachIndexed { index, count ->
+                if (count > 0) {
+                    Box(
+                        modifier = Modifier
+                            .weight(count.toFloat())
+                            .height(12.dp)
+                            .background(zoneColor(index)),
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(9.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            listOf("Z1", "Z2", "Z3", "Z4", "Z5").forEachIndexed { index, label ->
+                val pct = counts[index] * 100 / total
+                if (pct > 0) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(zoneColor(index)),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = "$label $pct%",
+                            fontSize = 10.5.sp,
+                            color = MiuixSummary,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun zoneColor(index: Int): Color = when (index) {
+    0 -> Color(0xFF8FB8FF)
+    1 -> Color(0xFF4F9BFF)
+    2 -> Color(0xFF34C759)
+    3 -> Color(0xFFFF9F0A)
+    else -> Color(0xFFFF4F4F)
 }

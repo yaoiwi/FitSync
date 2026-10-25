@@ -149,6 +149,8 @@ data class ActivitySampleEntity(
     @ColumnInfo(name = "ts_ms") val tsMs: Long,
     @ColumnInfo(name = "hr") val hr: Int = 0,
     @ColumnInfo(name = "cadrance") val cadence: Int = 0,
+    /** 瞬时速度（m/s），来自 FIT 的 RECORD.speed；详情页的配速曲线靠它 */
+    @ColumnInfo(name = "speed_ms") val speedMs: Double = 0.0,
     @ColumnInfo(name = "power_w") val powerW: Int = 0,
     @ColumnInfo(name = "spo2") val spo2: Int = 0,
     @ColumnInfo(name = "stress") val stress: Int = 0,

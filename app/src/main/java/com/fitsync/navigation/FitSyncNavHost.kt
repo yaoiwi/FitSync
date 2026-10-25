@@ -13,9 +13,11 @@ import com.fitsync.feature.detail.AccountsScreen
 import com.fitsync.feature.detail.ActivityDetailScreen
 import com.fitsync.feature.detail.CopyActivitiesScreen
 import com.fitsync.feature.detail.CopyHealthScreen
+import com.fitsync.feature.detail.ExportScreen
 import com.fitsync.feature.detail.ImportScreen
 import com.fitsync.feature.home.HomeScreen
 import com.fitsync.feature.login.LoginWizardScreen
+import com.fitsync.feature.settings.SyncLogsScreen
 import com.fitsync.ui.theme.FitSyncTheme
 
 sealed class Screen(val route: String) {
@@ -27,6 +29,8 @@ sealed class Screen(val route: String) {
     data object Import : Screen("import")
     data object CopyActivities : Screen("copy-activities")
     data object CopyHealth : Screen("copy-health")
+    data object SyncLogs : Screen("sync-logs")
+    data object Export : Screen("export")
 
     companion object {
         const val ACCOUNT_DETAIL = "account/{accountId}"
@@ -52,6 +56,8 @@ fun FitSyncRoot() {
                     onOpenImport = { navController.navigate(Screen.Import.route) },
                     onOpenCopyActivities = { navController.navigate(Screen.CopyActivities.route) },
                     onOpenCopyHealth = { navController.navigate(Screen.CopyHealth.route) },
+                    onOpenSyncLogs = { navController.navigate(Screen.SyncLogs.route) },
+                    onOpenExport = { navController.navigate(Screen.Export.route) },
                 )
             }
             composable(Screen.LoginWizard.route) {
@@ -103,6 +109,12 @@ fun FitSyncRoot() {
             }
             composable(Screen.CopyHealth.route) {
                 CopyHealthScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Screen.SyncLogs.route) {
+                SyncLogsScreen(onBack = { navController.popBackStack() })
+            }
+            composable(Screen.Export.route) {
+                ExportScreen(onBack = { navController.popBackStack() })
             }
         }
     }

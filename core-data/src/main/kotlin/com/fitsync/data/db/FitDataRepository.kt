@@ -36,10 +36,14 @@ interface FitDataRepository {
     suspend fun upsertSyncTask(task: SyncTaskEntity): Long
     suspend fun insertSyncLog(log: SyncLogEntity): Long
     fun observeRecentSyncLogs(accountId: Long): Flow<List<SyncLogEntity>>
+    /** 跨账号的最近同步记录（设置页「同步记录」用） */
+    fun observeAllRecentSyncLogs(limit: Int = 20): Flow<List<SyncLogEntity>>
     suspend fun acquireSyncLock(lock: SyncLockEntity)
     suspend fun releaseSyncLock(accountId: Long)
     suspend fun upsertBackfillShards(shards: List<BackfillShardEntity>)
     suspend fun pendingBackfillShards(accountId: Long): List<BackfillShardEntity>
+    suspend fun backfillShards(accountId: Long, domain: String): List<BackfillShardEntity>
+    suspend fun markBackfillShard(id: Long, status: String, ts: Long)
 
     // ==================== 运动域 ====================
     fun observeActivities(accountId: Long): Flow<List<ActivityEntity>>
@@ -47,6 +51,7 @@ interface FitDataRepository {
     /** 某个账号的活动总数；[accountId] 为 null 表示没有账号，返回 0 */
     fun observeActivityCount(accountId: Long?): Flow<Int>
     suspend fun getActivity(activityId: Long): ActivityEntity?
+    suspend fun getActivityByExternalId(accountId: Long, externalId: String): ActivityEntity?
     suspend fun upsertActivity(activity: ActivityEntity): Long
     suspend fun upsertActivitySamples(samples: List<ActivitySampleEntity>)
     suspend fun upsertActivityRoutes(routes: List<ActivityRouteEntity>)
@@ -82,7 +87,10 @@ interface FitDataRepository {
     fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>>
     fun observeLatestSleep(): Flow<SleepSessionEntity?>
     suspend fun upsertSleepSession(session: SleepSessionEntity): Long
+    suspend fun getSleepSessionByExternalId(accountId: Long, externalId: String): SleepSessionEntity?
     suspend fun upsertSleepStages(stages: List<SleepStageEntity>)
+    suspend fun deleteSleepStages(sessionId: Long)
+    fun observeSleepStages(sessionId: Long): Flow<List<SleepStageEntity>>
     suspend fun upsertHeartRateSamples(list: List<HeartRateSampleEntity>)
     suspend fun upsertDailyHeartRate(list: List<DailyHeartRateEntity>)
     fun observeDailyHeartRate(accountId: Long): Flow<List<DailyHeartRateEntity>>
