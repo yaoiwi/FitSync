@@ -1,0 +1,182 @@
+name: Build APK
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+# 打 tag 时要创建 / 更新 Release，需要写权限
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Miuix 的 class 文件是 Java 21 编译的，JDK 17 跑不了单测
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # miuix-ui 的 AAR 元数据要求 compileSdk >= 37。
+      # runner 上的 sdkmanager 未必认识 android-37，直接下载官方 platform 包更稳。
+      - name: Install Android SDK Platform 37
+        run: |
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          if [ ! -d "$SDK_ROOT/platforms/android-37" ]; then
+            curl -sSL -o /tmp/platform-37.zip https://dl.google.com/android/repository/platform-37.2_r01.zip
+            unzip -q /tmp/platform-37.zip -d /tmp/platform-37
+            mkdir -p "$SDK_ROOT/platforms"
+            mv /tmp/platform-37/android-37.2 "$SDK_ROOT/platforms/android-37"
+          fi
+          echo "SDK_ROOT=$SDK_ROOT"
+          ls "$SDK_ROOT/platforms"
+
+      # 签名准备：
+      # - 仓库配了 KEYSTORE_BASE64 等 Secrets → 用你自己的 release keystore（推荐，可上架）
+      # - 没配 → 回退到仓库里固定的 debug keystore（保证 CI 与本地产物签名一致）
+      # 两种情况下都不会出现"每次构建签名随机变化"的问题。
+      - name: Prepare signing
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+          KS_PASS: ${{ secrets.KEYSTORE_PASSWORD }}
+          K_ALIAS: ${{ secrets.KEY_ALIAS }}
+          K_PASS: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/fitsync.jks"
+            {
+              echo "KEYSTORE_PATH=$RUNNER_TEMP/fitsync.jks"
+              echo "KEYSTORE_PASSWORD=$KS_PASS"
+              echo "KEY_ALIAS=$K_ALIAS"
+              echo "KEY_PASSWORD=$K_PASS"
+            } >> "$GITHUB_ENV"
+            echo "签名：使用 Secrets 中的 release keystore"
+          else
+            mkdir -p "$HOME/.android"
+            cp signing/debug.keystore "$HOME/.android/debug.keystore"
+            echo "签名：未配置 Secrets，回退到固定 debug keystore"
+          fi
+
+      # 发布包必须是自己的签名，回退到 debug 签名的包不能发出去
+      - name: Require release keystore for tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          if [ -z "${KEYSTORE_PATH:-}" ]; then
+            echo "::error::打 tag 发布会用 debug 签名。请先配置 KEYSTORE_BASE64 / KEYSTORE_PASSWORD / KEY_ALIAS / KEY_PASSWORD 四个 Secret。"
+            exit 1
+          fi
+
+      # tag 名必须和 build.gradle.kts 的 versionName 对得上，避免 v0.11.0 的包里是旧版本号
+      - name: Check tag matches versionName
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          GRADLE_VERSION="$(grep -m1 -E 'versionName[[:space:]]*=' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')"
+          echo "tag=$TAG_VERSION  versionName=$GRADLE_VERSION"
+          if [ "$TAG_VERSION" != "$GRADLE_VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME 与 versionName $GRADLE_VERSION 不一致，先改版本号再打 tag"
+            exit 1
+          fi
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Run JVM unit tests
+        run: ./gradlew :core-data:testDebugUnitTest :app:testDebugUnitTest --stacktrace --no-daemon
+
+      # tag → release 包；分支 / PR / 手动触发 → debug 包
+      - name: Build release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Build debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: ./gradlew :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Verify release signature
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          APKSIGNER="$(find "${ANDROID_SDK_ROOT:-$ANDROID_HOME}/build-tools" -name apksigner -type f | sort -V | tail -1)"
+          echo "APK: $APK"
+          "$APKSIGNER" verify --print-certs "$APK"
+
+      # 发布前把 APK 的 SHA-256 算出来：写进 job summary，并随包上传一份校验文件
+      - name: Compute APK SHA-256
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          SUM="$(sha256sum "$APK" | awk '{print $1}')"
+          echo "APK_SHA256=$SUM" >> "$GITHUB_ENV"
+          {
+            echo "### APK SHA-256"
+            echo ""
+            echo '```'
+            echo "$SUM  $(basename "$APK")"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload release APK
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
+      - name: Upload debug APK
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-debug
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      # tag 构建完直接挂到 Release 上；Release 已存在就覆盖同名 APK
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
+          cp "$APK" "FitSync-${VERSION}.apk"
+          # 校验文件与 APK 同名同目录，下载后可直接 sha256sum -c apk-sha256
+          echo "${APK_SHA256}  FitSync-${VERSION}.apk" > apk-sha256
+          echo "asset: FitSync-${VERSION}.apk ($(du -h "FitSync-${VERSION}.apk" | cut -f1))"
+          echo "sha256: ${APK_SHA256}"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "FitSync-${VERSION}.apk" "apk-sha256" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" "FitSync-${VERSION}.apk" "apk-sha256" \
+              --title "FitSync ${VERSION}" \
+              --generate-notes
+          fi
+
+      - name: Upload test + build reports on failure
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-reports
+          path: |
+            **/build/reports/**
+            **/build/test-results/**
+            **/build/outputs/logs/**
+          if-no-files-found: ignore
