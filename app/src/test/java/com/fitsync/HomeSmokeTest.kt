@@ -17,6 +17,8 @@ import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.FitDataRepositoryImpl
+import com.fitsync.data.backup.DatabaseBackup
+import com.fitsync.data.exporter.DataExporter
 import com.fitsync.data.db.FitSyncDatabase
 import com.fitsync.data.importer.LocalDataImporter
 import com.fitsync.data.settings.AccountAliasStore
@@ -191,6 +193,8 @@ class HomeSmokeTest {
             PrimaryAccountStore(ApplicationProvider.getApplicationContext()),
             buildCoordinator(repo),
             AccountAliasStore(ApplicationProvider.getApplicationContext()),
+            DataExporter(db),
+            DatabaseBackup(ApplicationProvider.getApplicationContext(), db),
         )
 
         renderHome(viewModel)
@@ -222,6 +226,8 @@ class HomeSmokeTest {
             PrimaryAccountStore(ApplicationProvider.getApplicationContext()),
             buildCoordinator(repository),
             AccountAliasStore(ApplicationProvider.getApplicationContext()),
+            DataExporter(db),
+            DatabaseBackup(ApplicationProvider.getApplicationContext(), db),
         )
 
         renderHome(viewModel)

@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.fitsync.data.settings.SyncSettings
 import com.fitsync.data.sync.GarminSyncEngine
 import dagger.hilt.EntryPoint
 import dagger.hilt.InstallIn
@@ -55,19 +56,25 @@ object SyncScheduler {
 
     private const val PERIODIC_NAME = "garmin-periodic-sync"
 
-    private val constraints = Constraints.Builder()
-        .setRequiredNetworkType(NetworkType.CONNECTED)
-        .build()
-
     /**
-     * 每 6 小时同步一次；已有任务则更新参数，不重复排队。
+     * 按设置里的间隔登记周期任务；`hours <= 0` 表示关闭后台同步。
      *
-     * 用 runCatching 包住：WorkManager 初始化失败（Manifest 合并异常、测试环境等）
-     * 不应该让 Application.onCreate 崩掉——那会导致 App 每次启动都闪退。
+     * 「仅 Wi-Fi」直接映射成 WorkManager 的 UNMETERED 约束——
+     * 让系统在移动网络下根本不启动 Worker，比在 Worker 里判断更省电。
      */
-    fun schedulePeriodic(context: Context) {
+    fun schedulePeriodic(context: Context, hours: Long = SyncSettings.intervalHours(context)) {
+        if (hours <= 0L) {
+            cancelPeriodic(context)
+            return
+        }
         runCatching {
-            val request = PeriodicWorkRequestBuilder<SyncWorker>(6, TimeUnit.HOURS)
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(
+                    if (SyncSettings.wifiOnly(context)) NetworkType.UNMETERED else NetworkType.CONNECTED
+                )
+                .build()
+
+            val request = PeriodicWorkRequestBuilder<SyncWorker>(hours, TimeUnit.HOURS)
                 .setConstraints(constraints)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.MINUTES)
                 .build()
@@ -82,4 +89,8 @@ object SyncScheduler {
         }
     }
 
+    fun cancelPeriodic(context: Context) {
+        runCatching { WorkManager.getInstance(context).cancelUniqueWork(PERIODIC_NAME) }
+            .onFailure { android.util.Log.w("SyncScheduler", "取消定时同步失败", it) }
+    }
 }

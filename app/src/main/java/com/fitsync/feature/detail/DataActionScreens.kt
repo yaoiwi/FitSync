@@ -17,6 +17,10 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,11 +37,13 @@ import com.fitsync.ui.components.MiuixDivider
 import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
+import com.fitsync.ui.components.MiuixTextButton
 import com.fitsync.ui.components.regionLabel
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
+import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
@@ -311,6 +317,108 @@ fun CopyHealthScreen(
         }
     }
 }
+
+// ============================ 导出数据 ============================
+
+@Composable
+fun ExportScreen(
+    onBack: () -> Unit,
+    viewModel: HomeViewModel = hiltViewModel(),
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var busy by remember { mutableStateOf(false) }
+    var message by remember { mutableStateOf<String?>(null) }
+
+    fun writeTo(uri: android.net.Uri?, format: HomeViewModel.ExportFormat) {
+        if (uri == null) return
+        busy = true
+        message = null
+        scope.launch {
+            val outcome = runCatching {
+                val file = viewModel.buildExport(format)
+                context.contentResolver.openOutputStream(uri)?.use { it.write(file.bytes) }
+                    ?: error("无法写入所选位置")
+                file
+            }
+            busy = false
+            message = outcome.fold(
+                onSuccess = { f ->
+                    "已导出 ${f.summary.activities} 条活动、${f.summary.days} 天汇总、" +
+                        "${f.summary.nights} 晚睡眠（${(f.bytes.size / 1024).coerceAtLeast(1)} KB）"
+                },
+                onFailure = { "导出失败：${it.message ?: "未知错误"}" },
+            )
+        }
+    }
+
+    val jsonLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(HomeViewModel.ExportFormat.JSON.mime),
+    ) { uri -> writeTo(uri, HomeViewModel.ExportFormat.JSON) }
+
+    val zipLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(HomeViewModel.ExportFormat.CSV.mime),
+    ) { uri -> writeTo(uri, HomeViewModel.ExportFormat.CSV) }
+
+    DataActionPage(
+        title = "导出数据",
+        subtitle = "把本地库里的记录保存成文件",
+        onBack = onBack,
+    ) {
+        item {
+            MiuixSectionTitle("包含什么")
+            MiuixCard {
+                BulletLine("运动记录：类型、开始时间、时长、距离、心率、热量、爬升")
+                MiuixDivider(startIndent = 18)
+                BulletLine("每日汇总：步数、距离、楼层、活动/静息热量、静息心率、压力、血氧")
+                MiuixDivider(startIndent = 18)
+                BulletLine("睡眠：时长、在床时长、评分、平均心率与呼吸率")
+                MiuixDivider(startIndent = 18)
+                BulletLine("不包含账号密码与访问令牌，导出文件里拿不到登录凭据")
+            }
+        }
+        item {
+            MiuixSectionTitle("格式")
+            MiuixCard {
+                FormatRow("JSON", "字段完整，可以用「导入本地数据」再读回来")
+                MiuixDivider()
+                FormatRow("ZIP", "三个 CSV：活动 / 日汇总 / 睡眠，方便表格软件打开")
+            }
+        }
+        item {
+            Spacer(Modifier.height(8.dp))
+            MiuixPrimaryButton(
+                text = if (busy) "正在导出…" else "导出 JSON",
+                onClick = { jsonLauncher.launch(exportFileName("json")) },
+                enabled = !busy,
+                loading = busy,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            Spacer(Modifier.height(10.dp))
+            MiuixTextButton(
+                text = "导出 CSV（ZIP）",
+                onClick = { zipLauncher.launch(exportFileName("zip")) },
+                enabled = !busy,
+                modifier = Modifier.padding(horizontal = 16.dp),
+            )
+            message?.let { msg ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = msg,
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = MiuixSummary,
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+private fun exportFileName(ext: String): String =
+    "fitsync-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.CHINA)
+        .format(java.util.Date()) + "." + ext
 
 // ============================ 公共骨架 ============================
 

@@ -1,182 +1,125 @@
+<div align="center">
+  <img src="docs/icon.png" width="120" alt="FitSync" />
+
 # FitSync
 
-把 Garmin 中国区和国际区的账号数据聚合到一个 App 里：步数、睡眠、心率、运动记录统一查看，两个区之间还能互相同步和搬运数据。
+把 Garmin 中国区与国际区的数据聚合到一个 App：步数、睡眠、心率、运动记录统一查看。
 
-> 非官方客户端。与 Garmin Ltd. 无隶属关系，Garmin 是 Garmin Ltd. 的注册商标。
+![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=white)
+![Kotlin](https://img.shields.io/badge/Kotlin-2.4-7F52FF?logo=kotlin&logoColor=white)
+![Compose](https://img.shields.io/badge/Compose-BOM%202026.09-4285F4?logo=jetpackcompose&logoColor=white)
+![Miuix](https://img.shields.io/badge/Miuix-0.9.4-FF6900)
+![License](https://img.shields.io/badge/License-Apache--2.0-blue)
+![Release](https://img.shields.io/github/v/release/yaoiwi/FitSync?color=green)
 
-## 它解决什么问题
+**简体中文** | [English](README_EN.md)
+</div>
 
-Garmin 的中国区（`sso.garmin.cn`）和国际区（`sso.garmin.com`）是**两套独立账号体系**，数据互不相通。手表换区或者双区都有账号的人，只能在两个 App 之间来回切换。
+## ✨ 功能特色
 
-这个 App 的做法：
+| | | |
+|:---:|:---:|:---:|
+| **🧩 双区账号**<br>中国区与国际区同时登录，本地合并展示，主账号决定首页口径 | **🔁 活动互传**<br>把运动记录复制到另一个账号，换区不用重练 | **🏃 运动详情**<br>配速、心率、海拔曲线，一键生成成绩卡片分享 |
+| **📊 趋势与周报**<br>近 7 / 30 天变化，以及本周和上周的直接对比 | **🛌 睡眠分期**<br>深睡 / 浅睡 / REM / 清醒，一条彩带看清整晚 | **⏳ 历史回填**<br>活动翻页拉到最早，健康数据补齐一年 |
+| **📑 分段与区间**<br>每公里配速、步频功率曲线、心率区间占比 | **🎛️ 同步策略**<br>间隔 6/12/24 小时或仅手动，可限定仅 Wi-Fi | **🩺 健康搬运**<br>步数、睡眠、压力打包成 monitoring FIT 上传 |
+| **🔐 本地优先**<br>数据只存手机，令牌用 Tink 加密 | **📤 数据导出**<br>JSON 可再导入，CSV 三张表直接进表格软件 | **💾 备份恢复**<br>整个数据库一键备份，换机直接还原 |
+| **🌗 深色模式**<br>跟随系统 / 浅色 / 深色，全站即时生效 | **🔍 筛选搜索**<br>按运动类型、月份过滤，也能搜名称 | **🧾 同步记录**<br>每次同步的时间、条数、失败原因都留痕 |
 
-- 两个区可以同时登录，数据在本地合并展示
-- 主账号决定首页「今日」以谁为准
-- 支持把活动、健康数据从一个账号搬到另一个账号（Garmin 没开放接口，走的是 monitoring FIT 上传）
-- 数据只存本地，token 用 EncryptedFile + Tink 加密
+## 📱 界面
 
-## 界面
-
-<p align="center">
-  <img src="docs/screenshots/accounts.jpg" width="300" alt="账号管理">
-  &nbsp;&nbsp;&nbsp;
-  <img src="docs/screenshots/settings.jpg" width="300" alt="设置">
-</p>
+| 概览 | 账号管理 | 设置 |
+|:---:|:---:|:---:|
+| <img src="docs/screenshots/overview.jpg" width="220" alt="概览"> | <img src="docs/screenshots/accounts.jpg" width="220" alt="账号管理"> | <img src="docs/screenshots/settings.jpg" width="220" alt="设置"> |
 
 - 基于 [Miuix](https://github.com/YuKongA/miuix) 0.9.4（主题、卡片、开关、列表项、浮动导航），
-  在此之上补了自研组件：页面骨架 `HyperPage`、液态玻璃导航栏、分段控件、输入 / 确认对话框
+  在其上补了自研组件：页面骨架 `HyperPage`、液态玻璃导航栏、分段控件、输入 / 确认对话框
 - 液态玻璃底部导航栏：真实背景模糊 + 折射 + 双光源高光，指示器弹簧滑动、拖动跟手
 - 上滑时大标题折叠、列表两端弹性回弹、顶栏渐进模糊
-- 深色模式三档：跟随系统 / 浅色 / 深色
-- 四个页签：概览 / 活动 / 账号 / 设置
-- 触感反馈：列表行、按钮、开关、页签切换、同步完成都有震动，可在设置里关闭
+- 四个页签：概览 / 活动 / 账号 / 设置；触感反馈可关闭
 
 > 液态玻璃依赖 Android 13（API 33）的 RuntimeShader；更低版本自动降级为半透明 + 高光描边。
 
-## 功能
+## 📖 使用文档
 
-| 功能 | 状态 |
-|---|---|
-| Garmin 中国区 / 国际区登录（含 MFA） | ✅ |
-| 网页登录（WebView 取 ticket） | ✅ |
-| 多账号管理、昵称、主账号 | ✅ |
-| 步数 / 距离 / 热量 / 楼层 / 睡眠 / 心率 | ✅ |
-| 活动列表与详情（配速、心率、爬升） | ✅ |
-| 活动复制到另一账号 | ✅ |
-| 健康数据搬运（monitoring FIT） | ✅ 实验性 |
-| 本地文件导入（ZIP / JSON / CSV） | ✅ |
-| 深色模式（跟随系统 / 浅色 / 深色） | ✅ |
-| 触感反馈（可关闭） | ✅ |
-| 打开即同步（前台自动，5 分钟节流） | ✅ |
-| 定时后台同步（WorkManager） | ✅ |
+到 [Releases](https://github.com/yaoiwi/FitSync/releases/latest) 下载 APK 直接安装。每个版本同时附带 `apk-sha256`，下载后可核对：
 
-## 下载
+```bash
+sha256sum -c apk-sha256
+```
 
-到 [Releases](../../releases/latest) 下载最新 APK，直接安装。
+1. 打开 App，点右上角「添加账号」，登录 Garmin 中国区或国际区（支持 MFA）
+2. 首页下拉同步，第一次回填最近 7 天；之后打开即同步，后台每 6 小时一次
+3. 两个区都登录后，可在「账号 → 数据」里复制活动、搬运健康数据、导出本地记录
 
 - 系统要求 **Android 8.0（API 26）** 及以上
 - 液态玻璃效果需要 **Android 13（API 33）** 及以上，低版本自动降级
-- 首次打开需要登录 Garmin 账号（中国区 / 国际区都支持，可同时登录）
+- 遇到问题去 [Issues](https://github.com/yaoiwi/FitSync/issues)；构建与签名见下文
 
-> 从源码自己构建的步骤见下一节。
+## 🔨 构建
 
-## 构建
-
-**环境要求**（缺一不可）：
-
-- JDK **21**（Miuix 的 class 文件版本是 65）
-- Android SDK Platform **37** + Build-Tools 36+
-- Gradle **9.6.1**（wrapper 已指向）
+需要 JDK 17 与 Android SDK 37：
 
 ```bash
-# 1. 指向本机 SDK
-echo "sdk.dir=/path/to/Android/sdk" > local.properties
-
-# 2. 构建
-./gradlew :app:assembleDebug
-
-# 3. 产物
-# app/build/outputs/apk/debug/app-debug.apk
+./gradlew :app:test
+./gradlew :app:assembleRelease
 ```
 
-跑测试：
+产物：`app/build/outputs/apk/release/app-release.apk`
+
+<details>
+<summary>签名配置（开发 / 发布两条路径）</summary>
+
+由环境变量自动切换，两种都不会出现「每次构建签名随机变化」。
+
+**默认：仓库内的固定 debug keystore**
+
+`signing/debug.keystore` 提交在仓库里，密码是 Android 公开值（`android` / `androiddebugkey`）。CI 没配 Secrets、本地没导出环境变量时都用它。⚠️ 不能上架应用商店。
+
+**发布：自己的 release keystore**
 
 ```bash
-./gradlew :app:testDebugUnitTest
-```
+# 1. 生成（Termux 或电脑，需 JDK）
+keytool -genkeypair -v -keystore fitsync-release.jks -alias fitsync \
+  -keyalg RSA -keysize 2048 -validity 10000 -storetype JKS \
+  -storepass 你的密码 -dname "CN=FitSync, OU=Dev, O=yaoiwi, C=CN"
 
-> 工具链说明：AGP 9 默认启用内置 Kotlin，但与本项目的 kapt（Hilt/Room）不兼容，
-> 所以在 `gradle.properties` 里关掉了 `android.builtInKotlin`，继续用经典 Kotlin 插件。
-
-## 项目结构
-
-```
-app/          应用层：导航、登录向导、首页、详情页、数据操作页
-core-data/    数据层：Room、Garmin SSO/同步、加密存储、DI
-core-ui/      UI 层：Miuix 主题、液态玻璃、页面骨架、通用组件
-```
-
-技术栈与版本、发版流程见 [HANDOFF.md](HANDOFF.md)，每个版本的变更见 [CHANGELOG.md](CHANGELOG.md)。
-
-## 免责声明
-
-- 本项目使用 Garmin 的非公开接口，**随时可能失效**，账号也存在被风控的可能
-- 仅建议用于同步**你自己**的账号数据
-- 请自行评估风险，作者不对账号异常、数据丢失负责
-
-## 致谢
-
-完整列表在 App 内「设置 → 关于 → 开源致谢」，主要依赖：
-
-[Miuix](https://github.com/YuKongA/miuix) · [Jetpack Compose](https://developer.android.com/jetpack/compose) · [HyperIsland](https://github.com/1812z/HyperIsland)（液态玻璃与动画参考）· [Hilt](https://dagger.dev/hilt/) · [Room](https://developer.android.com/jetpack/androidx/releases/room) · [OkHttp](https://square.github.io/okhttp/) · [Garmin FIT SDK](https://developer.garmin.com/fit/)
-
-## 签名
-
-支持两种签名方式，由环境变量自动切换，**两种都不会出现"每次构建签名随机变化"**。
-
-### 方式一：固定 debug keystore（默认）
-
-`signing/debug.keystore` 提交在仓库里，密码是 Android 规定的公开值（`android` / `androiddebugkey`）。
-
-- CI 没配 Secrets 时自动回退到它
-- 本地构建也用它（`build.gradle.kts` 里写死为兜底）
-- 用途：开发调试、开源分发
-
-> ⚠️ debug 签名**不能上架应用商店**，因为这份密钥是公开的，任何人都能签出同签名的包。
-
-### 方式二：自己的 release keystore（发布用）
-
-1. 生成 keystore（Termux 或电脑，需 JDK）：
-
-```bash
-keytool -genkeypair -v \
-  -keystore fitsync-release.jks -alias fitsync \
-  -keyalg RSA -keysize 4096 -validity 10000 \
-  -storepass 你的密码 \
-  -dname "CN=FitSync, OU=App, O=Personal, L=Beijing, ST=Beijing, C=CN"
-```
-
-2. 转成单行 Base64：
-
-```bash
+# 2. 转单行 Base64
 base64 -w 0 fitsync-release.jks
 ```
 
-3. 在仓库 `Settings → Secrets and variables → Actions` 建四个 Secret：
+在 `Settings → Secrets and variables → Actions` 建四个 Secret：`KEYSTORE_BASE64`、`KEYSTORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`。CI 的 `Prepare signing` 步骤会解码使用；本地则导出 `KEYSTORE_PATH` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD` 四个环境变量。
 
-| Name | 内容 |
-|---|---|
-| `KEYSTORE_BASE64` | 上一步的输出 |
-| `KEYSTORE_PASSWORD` | store 密码 |
-| `KEY_ALIAS` | `fitsync` |
-| `KEY_PASSWORD` | key 密码 |
-
-4. CI 的 `Prepare signing` 步骤会解码并使用它；本地想用同一签名就导出环境变量：
+> 从 debug 切到 release 后，手机上已安装的旧版**必须先卸载**才能装新版。
 
 ```bash
-export KEYSTORE_PATH=/path/to/fitsync-release.jks
-export KEYSTORE_PASSWORD=...
-export KEY_ALIAS=fitsync
-export KEY_PASSWORD=...
-./gradlew :app:assembleDebug
-```
-
-> 从 debug 签名切换到 release 签名后，手机上已安装的旧版**必须先卸载**才能装新版（签名不同）。
-
-### 核对签名是否一致
-
-```bash
-# keystore 的证书指纹
+# 核对签名：两处应输出同一串指纹
 keytool -list -v -keystore fitsync-release.jks -alias fitsync -storepass 你的密码 | grep SHA256
-
-# APK 的证书指纹
 apksigner verify --print-certs app-debug.apk | grep SHA-256
 ```
 
-两者应是同一串（大小写、冒号分隔不影响）。keystore 文件本身的完整性用 `sha256sum fitsync-release.jks` 核对。
+</details>
 
-## 许可证
+## ⚠️ 免责声明
 
-[Apache-2.0](LICENSE)。可以自由使用、修改、分发，**包括商业用途和闭源衍生**，只需保留版权声明与许可证副本；同时包含明确的专利授权（谁起诉专利侵权，授权自动终止）。
+- 本项目使用 Garmin 的非公开接口，**随时可能失效**，账号也存在被风控的可能
+- 仅建议用于同步**你自己**的账号数据
+- 非官方客户端，与 Garmin Ltd. 无隶属关系；Garmin 是 Garmin Ltd. 的注册商标
+- 请自行评估风险，作者不对账号异常、数据丢失负责
 
-第三方依赖的许可证、以及液态玻璃相关代码的上游来源，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+## ⭐ Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=yaoiwi/FitSync&type=Date)](https://star-history.com/#yaoiwi/FitSync&Date)
+
+## 📄 许可证
+
+[Apache-2.0](LICENSE)。可自由使用、修改、分发，**包括商业用途和闭源衍生**，只需保留版权声明与许可证副本；同时包含明确的专利授权（谁起诉专利侵权，授权自动终止）。
+
+第三方依赖的许可证与液态玻璃相关代码的上游来源见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+<div align="center">
+
+Made with ❤️ for Garmin users
+
+![Stars](https://img.shields.io/github/stars/yaoiwi/FitSync?style=social)
+
+</div>

@@ -1,8 +1,9 @@
-package com.fitsync.data.network.personal
+package com.fitsync.data.fit
 
 import com.garmin.fit.Decode
 import com.garmin.fit.Mesg
 import com.garmin.fit.MesgListener
+import com.garmin.fit.LapMesg
 import com.garmin.fit.MesgNum
 import com.garmin.fit.RecordMesg
 import com.garmin.fit.SessionMesg
@@ -23,6 +24,7 @@ object FitActivityParser {
     data class Parsed(
         val samples: List<SamplePoint>,
         val routes: List<RoutePoint>,
+        val laps: List<LapPoint> = emptyList(),
         val totalDistanceM: Double = 0.0,
         val totalCalories: Double = 0.0,
         val avgHr: Int = 0,
@@ -39,6 +41,17 @@ object FitActivityParser {
         val tempC: Double,
     )
 
+    /** FIT 的 LAP 消息：每公里自动计圈或手动按圈 */
+    data class LapPoint(
+        val index: Int,
+        val startMs: Long,
+        val endMs: Long,
+        val durationSec: Long,
+        val distanceM: Double,
+        val avgHr: Int,
+        val maxHr: Int,
+    )
+
     data class RoutePoint(
         val seq: Int,
         val lat: Double,
@@ -53,6 +66,7 @@ object FitActivityParser {
     fun parse(bytes: ByteArray): Parsed {
         val samples = ArrayList<SamplePoint>(2048)
         val routes = ArrayList<RoutePoint>(2048)
+        val laps = ArrayList<LapPoint>(64)
         var seq = 0
         var totalDistance = 0.0
         var totalCalories = 0.0
@@ -107,6 +121,25 @@ object FitActivityParser {
                     }
                 }
 
+                MesgNum.LAP -> {
+                    val l = LapMesg(mesg)
+                    val startMs = (l.startTime?.timestamp ?: 0L).toLong() * 1000L
+                    val endMs = (l.timestamp?.timestamp ?: 0L).toLong() * 1000L
+                    // 起止时间缺失的圈直接丢，否则界面上会出现"时长 0 秒"的空行
+                    if (startMs > 0L && endMs >= startMs) {
+                        laps += LapPoint(
+                            index = laps.size + 1,
+                            startMs = startMs,
+                            endMs = endMs,
+                            durationSec = l.totalTimerTime?.toDouble()?.toLong()
+                                ?: ((endMs - startMs) / 1000L),
+                            distanceM = l.totalDistance?.toDouble() ?: 0.0,
+                            avgHr = l.avgHeartRate?.toInt() ?: 0,
+                            maxHr = l.maxHeartRate?.toInt() ?: 0,
+                        )
+                    }
+                }
+
                 MesgNum.SESSION -> {
                     val s = SessionMesg(mesg)
                     s.totalDistance?.let { totalDistance = it.toDouble() }
@@ -126,6 +159,7 @@ object FitActivityParser {
         return Parsed(
             samples = if (ok) samples else emptyList(),
             routes = if (ok) routes else emptyList(),
+            laps = if (ok) laps else emptyList(),
             totalDistanceM = totalDistance,
             totalCalories = totalCalories,
             avgHr = avgHr,

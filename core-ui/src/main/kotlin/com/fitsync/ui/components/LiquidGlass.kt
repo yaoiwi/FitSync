@@ -11,6 +11,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -80,13 +82,26 @@ fun Modifier.glassSource(): Modifier {
 fun GlassHost(
     modifier: Modifier = Modifier,
     background: Color = MiuixCanvas,
+    bottomScrimHeight: Dp = 0.dp,
     overlay: @Composable BoxScope.() -> Unit = {},
     content: @Composable BoxScope.() -> Unit,
 ) {
+    val bottomScrimPx = with(LocalDensity.current) { bottomScrimHeight.toPx() }
     val backdrop = if (isRuntimeShaderSupported()) {
         rememberLayerBackdrop {
             drawRect(background)
             drawContent()
+            // 底部导航栏只采样固定底色。下拉刷新时正文会整体下移，如果玻璃继续采样
+            // 移动中的卡片，导航栏颜色会跟着跳变；这里在 backdrop 里盖一层不可见的
+            // 底部底色，既不影响正文，也能让悬浮导航栏保持稳定。
+            if (bottomScrimPx > 0f) {
+                val scrimHeight = bottomScrimPx.coerceAtMost(size.height)
+                drawRect(
+                    color = background,
+                    topLeft = Offset(0f, size.height - scrimHeight),
+                    size = Size(size.width, scrimHeight),
+                )
+            }
         }
     } else {
         null

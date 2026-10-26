@@ -5,8 +5,8 @@ import androidx.compose.runtime.Immutable
 /**
  * 「关于」页的数据源。
  *
- * **从 0.10.10 起记录**：每次发版在 [AboutContent.changeLogs] 顶部加一条。
- * 项目根目录的 CHANGELOG.md 同步加同一节，两处内容保持一致。
+ * **只保留最新一版**：发版时直接替换 [AboutContent.changeLogs] 里的那一条，
+ * 不累积历史，仓库里也不再维护 CHANGELOG.md。
  */
 
 @Immutable
@@ -35,16 +35,15 @@ object AboutContent {
     // ============================ 更新日志 ============================
 
     /**
-     * 从 0.10.10 起开始记录：每次发版在顶部加一条，应用内展示完整列表。
-     * 项目根目录的 CHANGELOG.md 同步加同一节。
+     * 只展示最新一版：发版时整体替换这一条，不累积历史。
+     * 仓库里不再维护 CHANGELOG.md。
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "0.10.10",
-            date = "2026-10-24",
+            version = "0.13.2",
+            date = "2026-10-26",
             highlights = listOf(
-                "设置页新增「项目主页」「问题反馈」入口",
-                "更新日志从本版本开始记录",
+                "修复首页下拉同步时底部导航栏变色",
             ),
         ),
     )
