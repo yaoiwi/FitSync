@@ -16,8 +16,8 @@ android {
         applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 48
-        versionName = "0.10.10"
+        versionCode = 57
+        versionName = "0.13.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -46,7 +46,10 @@ android {
             signingConfig = signingConfigs.getByName("stable")
         }
         release {
-            isMinifyEnabled = false
+            // R8：裁掉未用代码 + 资源压缩。Compose/Hilt/Room/OkHttp 都自带 consumer rules，
+            // 自定义规则见 proguard-rules.pro（主要保 Miuix 与 Garmin FIT SDK）
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

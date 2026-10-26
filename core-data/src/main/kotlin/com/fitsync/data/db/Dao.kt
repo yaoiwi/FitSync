@@ -42,6 +42,10 @@ interface AccountDao {
     @Query("UPDATE accounts SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: Long, enabled: Boolean)
 
+    /** 导出用：只导身份信息，凭据在 CredentialVault 里，永远不落进导出文件 */
+    @Query("SELECT * FROM accounts ORDER BY added_at_ms ASC")
+    suspend fun all(): List<AccountEntity>
+
     @Delete
     suspend fun delete(a: AccountEntity)
 
@@ -107,6 +111,10 @@ interface SyncLogDao {
     @Query("SELECT * FROM sync_logs WHERE account_id = :a ORDER BY ts_ms DESC LIMIT :limit")
     fun observeRecent(a: Long, limit: Int = 20): Flow<List<SyncLogEntity>>
 
+    /** 跨账号的最近记录：同步记录页不区分账号，按时间排最直观 */
+    @Query("SELECT * FROM sync_logs ORDER BY ts_ms DESC LIMIT :limit")
+    fun observeRecentAll(limit: Int = 20): Flow<List<SyncLogEntity>>
+
     @Query("DELETE FROM sync_logs WHERE ts_ms < :beforeMs")
     suspend fun cleanBefore(beforeMs: Long)
 }
@@ -130,6 +138,9 @@ interface BackfillShardDao {
 
     @Query("SELECT * FROM backfill_shards WHERE account_id = :a AND status = 'pending' ORDER BY month")
     suspend fun pending(a: Long): List<BackfillShardEntity>
+
+    @Query("SELECT * FROM backfill_shards WHERE account_id = :a AND data_domain = :d")
+    suspend fun all(a: Long, d: String): List<BackfillShardEntity>
 
     @Query("UPDATE backfill_shards SET status = :status, updated_at_ms = :ts WHERE id = :id")
     suspend fun mark(id: Long, status: String, ts: Long)
@@ -175,6 +186,10 @@ interface ActivityDao {
 
     @Query("SELECT COUNT(*) FROM activities")
     fun observeTotalCount(): Flow<Int>
+
+    /** 导出用：全表按时间倒序 */
+    @Query("SELECT * FROM activities ORDER BY start_time_ms DESC")
+    suspend fun all(): List<ActivityEntity>
 
     @Query("DELETE FROM activities WHERE account_id = :a")
     suspend fun deleteByAccount(a: Long)
@@ -254,6 +269,10 @@ interface DailySummaryDao {
     @Query("SELECT * FROM daily_summaries ORDER BY date DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<DailySummaryEntity>>
 
+    /** 导出用：全表按日期正序 */
+    @Query("SELECT * FROM daily_summaries ORDER BY date ASC")
+    suspend fun all(): List<DailySummaryEntity>
+
     @Query("DELETE FROM daily_summaries WHERE account_id = :a")
     suspend fun deleteByAccount(a: Long)
 }
@@ -266,6 +285,10 @@ interface SleepSessionDao {
     @Query("SELECT * FROM sleep_sessions WHERE account_id = :a ORDER BY start_time_ms DESC")
     fun observeByAccount(a: Long): Flow<List<SleepSessionEntity>>
 
+    /** 同步时定位同一条睡眠，避免 REPLACE 换 id 后旧分期变成孤儿 */
+    @Query("SELECT * FROM sleep_sessions WHERE account_id = :a AND external_id = :ext LIMIT 1")
+    suspend fun byExternalId(a: Long, ext: String): SleepSessionEntity?
+
     @Query(
         "SELECT * FROM sleep_sessions WHERE total_sleep_min > 0 ORDER BY end_time_ms DESC LIMIT 1"
     )
@@ -275,6 +298,10 @@ interface SleepSessionDao {
         "SELECT * FROM sleep_sessions WHERE total_sleep_min > 0 ORDER BY end_time_ms DESC LIMIT :limit"
     )
     fun observeRecent(limit: Int): Flow<List<SleepSessionEntity>>
+
+    /** 导出用：全表按开始时间正序 */
+    @Query("SELECT * FROM sleep_sessions ORDER BY start_time_ms ASC")
+    suspend fun all(): List<SleepSessionEntity>
 
     @Query("DELETE FROM sleep_sessions WHERE account_id = :a")
     suspend fun deleteByAccount(a: Long)
@@ -287,6 +314,9 @@ interface SleepStageDao {
 
     @Query("SELECT * FROM sleep_stages WHERE sleep_session_id = :id ORDER BY start_time_ms")
     suspend fun bySession(id: Long): List<SleepStageEntity>
+
+    @Query("SELECT * FROM sleep_stages WHERE sleep_session_id = :id ORDER BY start_time_ms")
+    fun observeBySession(id: Long): Flow<List<SleepStageEntity>>
 
     @Query("DELETE FROM sleep_stages WHERE sleep_session_id = :id")
     suspend fun deleteBySession(id: Long)

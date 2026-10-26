@@ -5,6 +5,7 @@ package com.fitsync.ui.components
 import android.annotation.SuppressLint
 import android.graphics.RuntimeShader
 import android.os.SystemClock
+import android.view.HapticFeedbackConstants
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.VectorConverter
@@ -74,8 +75,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -120,6 +123,20 @@ import kotlin.math.sqrt
 @Immutable
 data class LiquidGlassNavigationItem(val icon: ImageVector, val label: String)
 
+/** 导航栏使用系统 CLOCK_TICK，不再自定义时长/振幅；仍受应用内触感开关控制。 */
+@Composable
+private fun rememberNavigationTick(): () -> Unit {
+    val context = LocalContext.current
+    val view = LocalView.current
+    return remember(context, view) {
+        {
+            if (Haptics.isEnabled(context)) {
+                view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+            }
+        }
+    }
+}
+
 /**
  * HyperIsland 同款液态玻璃底部导航栏。
  *
@@ -138,10 +155,10 @@ fun LiquidGlassNavigationBar(
 ) {
     if (items.isEmpty()) return
     val backdrop = LocalGlassBackdrop.current
-    val tick = rememberTick()
-    // 只在真正换页时震一下；点当前 tab 不震
-    val select: (Int) -> Unit = { index ->
-        if (index != selectedTabIndex()) tick()
+    val tick = rememberNavigationTick()
+    // 只在真正换页时震一下；点当前 tab 不震，拖动切换也不震
+    val select: (Int, Boolean) -> Unit = { index, withHaptic ->
+        if (withHaptic && index != selectedTabIndex()) tick()
         onTabSelected(index)
     }
     val barModifier = modifier
@@ -153,7 +170,7 @@ fun LiquidGlassNavigationBar(
                 items.forEachIndexed { index, item ->
                     FloatingNavigationBarItem(
                         selected = selectedTabIndex() == index,
-                        onClick = { select(index) },
+                        onClick = { select(index, true) },
                         icon = item.icon,
                         label = item.label,
                     )
@@ -169,14 +186,15 @@ fun LiquidGlassNavigationBar(
     ) {
         FloatingLiquidBar(
             selectedIndex = selectedTabIndex,
-            onSelected = select,
+            onSelected = { select(it, true) },
+            onDragSelected = { select(it, false) },
             backdrop = backdrop,
             tabsCount = items.size,
         ) {
             items.forEachIndexed { index, item ->
                 FloatingLiquidBarItem(
                     selected = selectedTabIndex() == index,
-                    onClick = { select(index) },
+                    onClick = { select(index, true) },
                     modifier = Modifier.defaultMinSize(minWidth = 76.dp),
                 ) {
                     Icon(
@@ -276,6 +294,7 @@ internal fun RowScope.FloatingLiquidBarItem(
 private fun FloatingLiquidBar(
     selectedIndex: () -> Int,
     onSelected: (Int) -> Unit,
+    onDragSelected: (Int) -> Unit = onSelected,
     backdrop: Backdrop,
     tabsCount: Int,
     modifier: Modifier = Modifier,
@@ -303,7 +322,7 @@ private fun FloatingLiquidBar(
         }
     }
     val latestSelectedIndex by rememberUpdatedState(selectedIndex)
-    val latestOnSelected by rememberUpdatedState(onSelected)
+    val latestOnDragSelected by rememberUpdatedState(onDragSelected)
     class Holder { var animation: DampedDragAnimation? = null }
     val holder = remember { Holder() }
     val dragAnimation = remember(animationScope, tabsCount, density, isLeftToRight) {
@@ -326,7 +345,7 @@ private fun FloatingLiquidBar(
             onDragStopped = {
                 val target = targetValue.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
                 animateToValue(target.toFloat())
-                latestOnSelected(target)
+                latestOnDragSelected(target)
                 animationScope.launch { offsetAnimation.animateTo(0f, spring(1f, 300f, 0.5f)) }
             },
             onDrag = { _, amount ->
