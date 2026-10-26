@@ -87,6 +87,7 @@ import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.theme.FitSyncTheme
+import com.fitsync.ui.theme.FloatingNavBarPref
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixAction
 import com.fitsync.ui.theme.MiuixCanvas
@@ -128,6 +129,8 @@ fun HomeScreen(
     // 外观模式：设置页改了之后这里会重读，整页立刻切色板
     val themeMode by remember(context) { ThemeModePref.flow(context) }
         .collectAsState(initial = ThemeModePref.FOLLOW)
+    val floatingNavBar by remember(context) { FloatingNavBarPref.flow(context) }
+        .collectAsState(initial = FloatingNavBarPref.isEnabled(context))
     val accounts by viewModel.accounts.collectAsState()
     val accountsLoaded by viewModel.accountsLoaded.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
@@ -228,6 +231,7 @@ fun HomeScreen(
                                 LiquidGlassNavigationItem(Icons.Filled.Settings, "设置"),
                             ),
                             modifier = Modifier.align(Alignment.BottomCenter),
+                            floating = floatingNavBar,
                         )
                     },
                 ) {
@@ -272,6 +276,8 @@ fun HomeScreen(
                                 message = syncState.message,
                                 themeMode = themeMode,
                                 onThemeModeChange = { ThemeModePref.set(context, it) },
+                                floatingNavBar = floatingNavBar,
+                                onFloatingNavBarChange = { FloatingNavBarPref.set(context, it) },
                                 onOpenAccounts = onOpenAccounts,
                                 onOpenChangelog = onOpenChangelog,
                                 onOpenAcknowledgements = onOpenAcknowledgements,
@@ -966,6 +972,8 @@ private fun SettingsTab(
     message: String?,
     themeMode: String = ThemeModePref.FOLLOW,
     onThemeModeChange: (String) -> Unit = {},
+    floatingNavBar: Boolean = true,
+    onFloatingNavBarChange: (Boolean) -> Unit = {},
     onOpenAccounts: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
     onOpenAcknowledgements: () -> Unit = {},
@@ -1135,6 +1143,24 @@ private fun SettingsTab(
                         onSelect = { onThemeModeChange(themeCodes[it]) },
                     )
                 }
+                MiuixDivider()
+                MiuixRow(
+                    title = "悬浮导航栏",
+                    summary = if (floatingNavBar) {
+                        "液态玻璃悬浮样式，可左右拖动切换"
+                    } else {
+                        "当前为贴底标准导航栏"
+                    },
+                    trailing = {
+                        MiuixSwitch(
+                            checked = floatingNavBar,
+                            onCheckedChange = { enabled ->
+                                onFloatingNavBarChange(enabled)
+                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                            },
+                        )
+                    },
+                )
                 MiuixDivider()
                 MiuixRow(
                     title = "触感反馈",

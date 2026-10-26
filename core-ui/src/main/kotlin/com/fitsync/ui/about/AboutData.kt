@@ -40,10 +40,11 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "0.13.3",
+            version = "0.13.4",
             date = "2026-10-26",
             highlights = listOf(
-                "导航栏触感与参考实现对齐",
+                "外观设置新增悬浮导航栏开关",
+                "关闭后切换为贴底标准导航栏",
             ),
         ),
     )

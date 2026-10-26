@@ -100,6 +100,8 @@ import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBar
 import top.yukonga.miuix.kmp.basic.FloatingNavigationBarItem
 import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.NavigationBar
+import top.yukonga.miuix.kmp.basic.NavigationBarItem
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
@@ -152,6 +154,7 @@ fun LiquidGlassNavigationBar(
     onTabSelected: (Int) -> Unit,
     items: List<LiquidGlassNavigationItem>,
     modifier: Modifier = Modifier,
+    floating: Boolean = true,
 ) {
     if (items.isEmpty()) return
     val backdrop = LocalGlassBackdrop.current
@@ -161,6 +164,22 @@ fun LiquidGlassNavigationBar(
         if (withHaptic && index != selectedTabIndex()) tick()
         onTabSelected(index)
     }
+
+    // 关闭悬浮导航栏时使用 Miuix 标准贴底导航栏，避免没有入口切页。
+    if (!floating) {
+        NavigationBar(modifier = modifier.fillMaxWidth()) {
+            items.forEachIndexed { index, item ->
+                NavigationBarItem(
+                    selected = selectedTabIndex() == index,
+                    onClick = { select(index, true) },
+                    icon = item.icon,
+                    label = item.label,
+                )
+            }
+        }
+        return
+    }
+
     val barModifier = modifier
         .fillMaxWidth()
         .padding(bottom = 12.dp + WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding())
