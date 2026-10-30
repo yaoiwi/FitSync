@@ -40,12 +40,12 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "1.14.1",
-            date = "2026-10-30",
+            version = "1.14.2",
+            date = "2026-10-31",
             highlights = listOf(
-                "开源致谢新增 DailySync（dailysync-rev）：搬运功能参考了它的 wellness 包做法",
-                "说明其上游为 GPL-3.0：本项目只借用接口与行为，代码为 Kotlin 独立实现，未复制或翻译其源码，因此仍按 Apache-2.0 发布",
-                "README 中英文与 THIRD_PARTY_NOTICES 同步补齐许可证说明，源码文件头标注了出处",
+                "修复 GitHub Actions 构建失败：app 模块的冒烟测试仍在用旧构造参数创建同步服务，CI 编译不过",
+                "发版流程补充：本机自检必须用 JDK 21 跑 app 单测，JDK 20 会因 Miuix 的 Java 21 字节码直接报错",
+                "功能与 1.14.1 一致，仅修正测试代码与文档",
             ),
         ),
     )

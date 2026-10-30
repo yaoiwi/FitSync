@@ -29,6 +29,7 @@ import com.fitsync.data.network.GarminSsoClient
 import com.fitsync.data.network.MemoryCookieJar
 import com.fitsync.data.network.StorableCredential
 import com.fitsync.data.health.HealthSyncService
+import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.sync.SyncCoordinator
 import com.fitsync.data.sync.ActivityCopyService
 import com.fitsync.data.sync.GarminSyncEngine
@@ -126,11 +127,11 @@ class HomeSmokeTest {
         }
         val http = OkHttpClient()
         return HealthSyncService(
-            context = ApplicationProvider.getApplicationContext(),
             repository = repository,
             connectClient = GarminConnectClient(http),
             credentialStore = noopStore,
             ssoClient = GarminSsoClient(noopStore, http, MemoryCookieJar()),
+            copyLedger = HealthCopyLedger(ApplicationProvider.getApplicationContext()),
         )
     }
 
@@ -151,6 +152,7 @@ class HomeSmokeTest {
             localImporter = LocalDataImporter(repository),
             activityCopyService = buildCopyService(repository),
             healthSyncService = buildHealthService(repository),
+            aliasStore = AccountAliasStore(ApplicationProvider.getApplicationContext()),
         )
     }
 

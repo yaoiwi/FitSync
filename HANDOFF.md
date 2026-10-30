@@ -9,7 +9,9 @@
    （应用内只展示最新一版，不累积历史）。
 3. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组，以及 `THIRD_PARTY_NOTICES.md`。
 4. 若参考了外部开源项目（即使只借接口不抄代码），在 `THIRD_PARTY_NOTICES.md` 里写清上游许可证与「是否使用其代码」；GPL/AGPL 项目只能参考文档化的接口，不得复制代码，否则整个项目必须改为同许可证。
-5. 构建 + 跑 `:app:testDebugUnitTest`，确认全绿再打包。
+5. 本机自检：**必须用 JDK 21** 跑 CI 同款命令 `JAVA_HOME=/opt/jdk21 ./gradlew :core-data:testDebugUnitTest :app:testDebugUnitTest`。
+   只跑 `:app:assembleRelease` 不会编译 `app/src/test`，测试代码里的旧构造参数要等 CI 才会暴露（1.14.1 就是这样挂的）；
+   本机 JDK 20 跑 app 单测会因 Miuix 的 Java 21 字节码报 `UnsupportedClassVersionError`，那是环境问题，不是代码问题。
 
 > 仓库里不维护 `CHANGELOG.md`；更新内容只写在 `AboutData.changeLogs`。
 
