@@ -110,8 +110,10 @@ class ActivityCopyService @Inject constructor(
                 return@forEach
             }
 
-            val uploaded = runCatching {
-                connectClient.uploadActivityFile(
+            // 用带状态码的版本：复制活动同时也是"上传通道是否可用"的探针，
+            // 失败时把 HTTP 码带出来，才能分清是风控、认证还是文件被拒。
+            val outcome = runCatching {
+                connectClient.uploadActivityFileOutcome(
                     region = toRegion,
                     accessToken = tokens.second,
                     fileName = file.fileName,
@@ -119,11 +121,12 @@ class ActivityCopyService @Inject constructor(
                 )
             }.getOrNull()
 
-            if (uploaded != null) {
+            if (outcome?.ok == true) {
                 copied++
             } else {
                 failed++
-                messages += "${activity.sport} ${dateFormat.format(Date(activity.startTimeMs))}：上传失败"
+                messages += "${activity.sport} ${dateFormat.format(Date(activity.startTimeMs))}：" +
+                    (outcome?.errorText ?: "上传请求未发出")
             }
         }
 

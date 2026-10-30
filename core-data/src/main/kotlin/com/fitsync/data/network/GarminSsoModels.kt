@@ -89,7 +89,7 @@ sealed class GarminNetworkException(message: String, cause: Throwable? = null) :
 
     /** 账号被风控 / 锁定 */
     class RiskBlocked(cause: Throwable? = null) :
-        GarminNetworkException("账号被风控限制，请稍后重试或更换账号", cause)
+        GarminNetworkException("Garmin 正在限流（HTTP 429）：等 5–10 分钟再试，期间别连续点同步", cause)
 
     /** MFA 错误 */
     class MfaInvalid(message: String = "验证码错误或已过期") :

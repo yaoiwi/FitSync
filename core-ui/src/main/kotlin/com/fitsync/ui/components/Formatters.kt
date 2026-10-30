@@ -87,6 +87,23 @@ fun regionLabel(region: String): String = when (region) {
     else -> region
 }
 
+/**
+ * 账号显示名。
+ *
+ * 旧版本登录时 `socialProfile.displayName` 可能是空的，落库的只剩一串 GUID
+ * （`371d55ac-80da-47eb-a856-87246836ee69`）。界面上不该出现这种东西，
+ * 所以看起来像 GUID 的名字一律退回「Garmin 账号 · 区域」。
+ */
+fun accountTitle(displayName: String, region: String): String {
+    val name = displayName.trim()
+    if (name.isEmpty() || looksLikeGuid(name)) return "Garmin 账号 · ${regionLabel(region)}"
+    return name
+}
+
+fun looksLikeGuid(value: String): Boolean =
+    value.length >= 32 && value.count { it == '-' } >= 4 &&
+        value.all { it.isLetterOrDigit() || it == '-' }
+
 fun statusLabel(status: String): String = when (status) {
     "normal" -> "正常"
     "syncing" -> "同步中"

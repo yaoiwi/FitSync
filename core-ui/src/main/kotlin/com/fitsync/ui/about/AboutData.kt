@@ -40,11 +40,12 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "0.13.4",
-            date = "2026-10-26",
+            version = "1.14.1",
+            date = "2026-10-30",
             highlights = listOf(
-                "外观设置新增悬浮导航栏开关",
-                "关闭后切换为贴底标准导航栏",
+                "开源致谢新增 DailySync（dailysync-rev）：搬运功能参考了它的 wellness 包做法",
+                "说明其上游为 GPL-3.0：本项目只借用接口与行为，代码为 Kotlin 独立实现，未复制或翻译其源码，因此仍按 Apache-2.0 发布",
+                "README 中英文与 THIRD_PARTY_NOTICES 同步补齐许可证说明，源码文件头标注了出处",
             ),
         ),
     )
@@ -164,6 +165,17 @@ object AboutContent {
             ),
         ),
         OpenSourceGroup(
+            title = "思路与接口参考（仅参考做法，未使用其代码）",
+            items = listOf(
+                OpenSourceItem(
+                    name = "DailySync（dailysync-rev）",
+                    license = "GPL-3.0 · 未包含其代码",
+                    url = "https://github.com/gooin/dailysync-rev",
+                    role = "健康数据搬运的接口与流程参考：下载当天 wellness 原始包、以 userfile 上传、用 409 判定重复。本项目为 Kotlin 独立实现，未复制或翻译其源码，整体仍按 Apache-2.0 发布",
+                ),
+            ),
+        ),
+        OpenSourceGroup(
             title = "开发与测试",
             items = listOf(
                 OpenSourceItem(
@@ -200,5 +212,6 @@ object AboutContent {
         ),
     )
 
-    const val THANKS = "感谢以上项目及其贡献者。没有这些开源工作，这个应用不会存在。"
+    const val THANKS = "感谢以上项目及其贡献者。没有这些开源工作，这个应用不会存在。" +
+        "其中 DailySync 以 GPL-3.0 发布，本项目只参考其接口做法，未使用其代码。"
 }

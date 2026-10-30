@@ -40,6 +40,21 @@
 
 依 Apache-2.0 第 4 条，上述文件保留原始版权与许可声明，修改处已在代码注释中标注。
 
+### 关于 DailySync（GPL-3.0）——只参考接口与行为，未使用其代码
+
+「搬运健康数据」这一功能的做法，参考了 [gooin/dailysync-rev](https://github.com/gooin/dailysync-rev)：
+
+| 项目 | 说明 |
+|---|---|
+| 上游许可证 | **GNU GPL-3.0**（上游仓库内 `LICENSE.txt`） |
+| 参考内容 | ① 用 `GET /download-service/files/wellness/{date}` 下载设备当天原始 wellness 包；② 上传时表单字段名为 `userfile`；③ 以 HTTP 409 或响应含 `Duplicate Wellness File` 判定「重复文件」 |
+| 实际使用情况 | **未复制、未翻译、未改编上游任何源码**。本项目是 Kotlin 独立实现（`WellnessPackage.kt`、`GarminConnectClient.downloadWellnessZip()` / `uploadActivityFileOutcome()`），解压策略、大小与条目上限、错误分类、本地记账窗口均为本项目自行设计，与上游实现不同 |
+| 结论 | 上述三项属于 HTTP 接口约定（端点路径、表单字段名、状态码语义），是功能性事实而非受版权保护的表达；本项目**不是** GPL-3.0 的衍生作品，整体仍按 Apache-2.0 发布，APK 与源码包中不含任何 GPL-3.0 代码 |
+
+**如果将来要直接移植上游代码**：GPL-3.0 是强著佐权许可，届时必须把包含该代码的整个程序改为 GPL-3.0，并在分发时提供完整对应源码、保留原版权声明。本项目在当前版本没有这样做，以后也不会把 GPL 代码混入 Apache-2.0 代码库。
+
+**关于上游 README 的额外限制**：上游 README 写有「仅限用于学习和研究，不得用于商业用途」，这与 GPL-3.0 本身允许商用的条款并不一致（GPL-3.0 第 7 条不允许叠加额外限制）。由于本项目未使用其代码，该声明不对本项目构成额外约束；本项目仍按自身的 Apache-2.0 授权。
+
 ## 三、仅用于测试（不随 APK 分发）
 
 | 组件 | 许可证 |
@@ -54,6 +69,7 @@
 - Apache-2.0：https://www.apache.org/licenses/LICENSE-2.0
 - MIT：见下方
 - Apache-2.0（本项目本体）：见 `LICENSE`
+- GPL-3.0（DailySync 上游，本项目未使用其代码）：https://www.gnu.org/licenses/gpl-3.0.html
 - FIT Protocol License：https://developer.garmin.com/fit/
 
 ```

@@ -63,6 +63,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.BuildConfig
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
+import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HapticFeedback
 import com.fitsync.ui.components.Haptics
@@ -193,8 +194,8 @@ fun HomeScreen(
                     title = "修改昵称",
                     initialValue = customAlias ?: "",
                     message = "只影响本应用的显示名，不会改动 Garmin 账号。原昵称："
-                        + target.displayName.ifBlank { target.externalUserId },
-                    placeholder = target.displayName.ifBlank { target.externalUserId },
+                        + accountTitle(target.displayName, target.region),
+                    placeholder = accountTitle(target.displayName, target.region),
                     neutralText = if (!customAlias.isNullOrBlank()) "恢复默认" else null,
                     onNeutral = {
                         viewModel.renameAccount(target.id, "")
@@ -909,7 +910,7 @@ private fun AccountRow(
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
-                text = (alias ?: account.displayName.ifBlank { account.externalUserId }),
+                text = (alias ?: accountTitle(account.displayName, account.region)),
                 fontSize = 16.sp,
                 color = MiuiText1,
                 maxLines = 1,

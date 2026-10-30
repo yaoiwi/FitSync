@@ -38,6 +38,7 @@ import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixTextButton
+import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.regionLabel
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
@@ -194,7 +195,7 @@ fun CopyActivitiesScreen(
                     trailing = {
                         Text(
                             text = accounts.firstOrNull { it.id == primaryAccountId }
-                                ?.let { aliases[it.id] ?: it.displayName.ifBlank { it.externalUserId } }
+                                ?.let { aliases[it.id] ?: accountTitle(it.displayName, it.region) }
                                 ?: "未设置",
                             fontSize = 14.sp,
                             color = MiuixSummary,
@@ -207,7 +208,7 @@ fun CopyActivitiesScreen(
                     summary = target?.let { regionLabel(it.region) } ?: "需要另一个 Garmin 账号",
                     trailing = {
                         Text(
-                            text = target?.let { aliases[it.id] ?: it.displayName.ifBlank { it.externalUserId } }
+                            text = target?.let { aliases[it.id] ?: accountTitle(it.displayName, it.region) }
                                 ?: "—",
                             fontSize = 14.sp,
                             color = MiuixSummary,
@@ -261,28 +262,43 @@ fun CopyHealthScreen(
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
     val syncState by viewModel.syncState.collectAsState()
-    val target = accounts.filter { it.sourceType == "garmin" }.firstOrNull { it.id != primaryAccountId }
+    val garminAccounts = accounts.filter { it.sourceType == "garmin" }
+    val source = garminAccounts.firstOrNull { it.id == primaryAccountId } ?: garminAccounts.firstOrNull()
+    val target = garminAccounts.firstOrNull { it.id != source?.id }
 
     DataActionPage(
         title = "搬运健康数据",
-        subtitle = "把主账号的步数、睡眠、压力上传到另一账号",
+        subtitle = "把主账号的健康数据转发到另一账号",
         onBack = onBack,
     ) {
         item {
             MiuixSectionTitle("搬运范围")
             MiuixCard {
-                BulletLine("最近 7 天的步数、睡眠、压力，以 monitoring FIT 上传")
+                BulletLine("最近 7 天：直接转发设备当天的 wellness 原始包（步数、睡眠、压力都在里面）")
                 MiuixDivider(startIndent = 18)
-                BulletLine("目标账号必须已绑定这块手表，否则 Garmin 会拒绝")
+                BulletLine("目标账号必须已绑定这块手表并激活 wellness，否则 Garmin 会拒绝")
                 MiuixDivider(startIndent = 18)
-                BulletLine("睡眠 / HRV 类数据 Garmin 只允许回溯约 1 个月")
+                BulletLine("目标账号已有同一天的文件会自动跳过，不重复上传")
+            }
+        }
+        item {
+            MiuixSectionTitle("源账号")
+            MiuixCard {
+                MiuixRow(
+                    title = source?.let { aliases[it.id] ?: accountTitle(it.displayName, it.region) }
+                        ?: "还没有 Garmin 账号",
+                    summary = listOfNotNull(
+                        source?.let { regionLabel(it.region) },
+                        "搬运来源 · 由「主账号」决定",
+                    ).joinToString(" · "),
+                )
             }
         }
         item {
             MiuixSectionTitle("目标账号")
             MiuixCard {
                 MiuixRow(
-                    title = target?.let { aliases[it.id] ?: it.displayName.ifBlank { it.externalUserId } }
+                    title = target?.let { aliases[it.id] ?: accountTitle(it.displayName, it.region) }
                         ?: "还需要一个 Garmin 账号",
                     summary = target?.let { regionLabel(it.region) } ?: "先在账号页添加另一个区",
                 )

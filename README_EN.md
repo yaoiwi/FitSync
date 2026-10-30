@@ -21,7 +21,7 @@ One app for both of your Garmin accounts: steps, sleep, heart rate and workouts 
 |:---:|:---:|:---:|
 | **🧩 Two regions**<br>Mainland China and International accounts side by side, merged locally | **🔁 Workout transfer**<br>Copy activities to the other account — no re-recording after switching regions | **🏃 Workout detail**<br>Pace, heart rate and elevation curves, plus a shareable summary card |
 | **📊 Trends & weekly**<br>7 / 30-day changes, plus this week vs last week | **🛌 Sleep stages**<br>Deep, light, REM and awake in one colour band | **⏳ Backfill**<br>Page through every activity; a year of daily health data |
-| **📑 Laps & zones**<br>Per-km pace, cadence and power curves, heart-rate zone split | **🎛️ Sync policy**<br>Every 6/12/24 hours or manual only; Wi-Fi-only option | **🩺 Health migration**<br>Steps, sleep and stress uploaded as monitoring FIT |
+| **📑 Laps & zones**<br>Per-km pace, cadence and power curves, heart-rate zone split | **🎛️ Sync policy**<br>Every 6/12/24 hours or manual only; Wi-Fi-only option | **🩺 Health migration**<br>Forwards the device's original wellness package (steps, sleep, stress) |
 | **🔐 Local first**<br>Data stays on the phone; tokens encrypted with Tink | **📤 Export**<br>Re-importable JSON, or three CSV tables | **💾 Backup**<br>One-tap database backup, restore on a new phone |
 | **🌗 Dark mode**<br>Follow system / light / dark, applied instantly | **🔍 Filter & search**<br>By sport, month, or name | **🧾 Sync log**<br>Time, record count and failure reason for every run |
 
@@ -41,15 +41,14 @@ One app for both of your Garmin accounts: steps, sleep, heart rate and workouts 
 
 ## 📖 Getting started
 
-Download the APK from [Releases](https://github.com/yaoiwi/FitSync/releases/latest) and install it. Each release ships a `apk-sha256`:
+1. Open [Releases](https://github.com/yaoiwi/FitSync/releases/latest) and download `FitSync-1.14.1.apk` (install over the old version; settings are kept).
+2. Open the app, tap "Add account" and sign in to Garmin China or Garmin International (MFA supported)
+3. Pull to refresh — the first sync backfills 7 days; afterwards it syncs on open and every 6 hours in the background
+4. With both accounts added, use "Accounts → Data" to copy activities, migrate health data, or export your local records
 
-```bash
-sha256sum -c apk-sha256
-```
+> Each release also includes `apk-sha256`; verify with `sha256sum -c apk-sha256`.
 
-1. Open the app, tap "Add account" and sign in to Garmin China or Garmin International (MFA supported)
-2. Pull to refresh — the first sync backfills 7 days; afterwards it syncs on open and every 6 hours in the background
-3. With both accounts added, use "Accounts → Data" to copy activities, migrate health data, or export your local records
+> Versioning: regular releases step `1.13` → `1.14`; small fixes use three parts such as `1.14.1`.
 
 - Requires **Android 8.0 (API 26)** or newer
 - The liquid-glass effect requires **Android 13 (API 33)**; older versions degrade gracefully
@@ -115,6 +114,10 @@ apksigner verify --print-certs app-debug.apk | grep SHA-256
 [Apache-2.0](LICENSE). Free to use, modify and distribute, **including commercial and closed-source derivatives**, as long as the copyright notice and license text are kept. Includes an express patent grant (terminated if you sue over patents).
 
 Third-party licenses and the upstream source of the liquid-glass code are listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
+### About the DailySync reference
+
+The health-data transfer feature was informed by [DailySync (dailysync-rev)](https://github.com/gooin/dailysync-rev), which is released under **GPL-3.0**. This project only borrows the Garmin endpoints and semantics it uses (downloading the daily wellness package from `download-service/files/wellness/{date}`, uploading with the `userfile` field, treating HTTP 409 as a duplicate). The implementation here is independent Kotlin code: **no upstream source was copied, translated, or adapted**. FitSync is therefore not a derivative work of GPL-3.0 code and remains licensed under Apache-2.0, with no GPL code in the APK or source archive. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for the full note.
 
 <div align="center">
 

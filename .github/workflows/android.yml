@@ -95,6 +95,14 @@ jobs:
             exit 1
           fi
 
+      - name: Resolve app version
+        id: app_version
+        run: |
+          VERSION="$(grep -m1 -E 'versionName[[:space:]]*=' app/build.gradle.kts | sed -E 's/.*"([^"]+)".*/\1/')"
+          [ -n "$VERSION" ] || { echo "::error::读不到 versionName"; exit 1; }
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION"
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
@@ -118,29 +126,31 @@ jobs:
           echo "APK: $APK"
           "$APKSIGNER" verify --print-certs "$APK"
 
-      # 发布前把 APK 的 SHA-256 算出来：写进 job summary，并随包上传一份校验文件
-      - name: Compute APK SHA-256
+      # 发布前把 APK 重命名为 FitSync-<版本>.apk，并生成 apk-sha256
+      - name: Package release APK
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
-          SUM="$(sha256sum "$APK" | awk '{print $1}')"
+          cp -f "$APK" "FitSync-${VERSION}.apk"
+          SUM="$(sha256sum "FitSync-${VERSION}.apk" | awk '{print $1}')"
           echo "APK_SHA256=$SUM" >> "$GITHUB_ENV"
+          echo "${SUM}  FitSync-${VERSION}.apk" > apk-sha256
           {
             echo "### APK SHA-256"
             echo ""
             echo '```'
-            echo "$SUM  $(basename "$APK")"
+            echo "$SUM  FitSync-${VERSION}.apk"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "${SUM}  $(basename "$APK")" > apk-sha256
+          ls -lh "FitSync-${VERSION}.apk" apk-sha256
 
       - name: Upload release APK
         if: startsWith(github.ref, 'refs/tags/v')
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
+          name: FitSync-${{ env.VERSION }}
           path: |
-            app/build/outputs/apk/release/*.apk
+            FitSync-${{ env.VERSION }}.apk
             apk-sha256
           if-no-files-found: error
 
@@ -158,14 +168,13 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          APK="$(ls app/build/outputs/apk/release/*.apk | head -1)"
-          echo "asset: $(basename "$APK") ($(du -h "$APK" | cut -f1))"
+          VERSION="${VERSION:-${GITHUB_REF_NAME#v}}"
+          echo "asset: FitSync-${VERSION}.apk ($(du -h "FitSync-${VERSION}.apk" | cut -f1))"
           echo "sha256: ${APK_SHA256}"
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" "$APK" "apk-sha256" --clobber
+            gh release upload "$GITHUB_REF_NAME" "FitSync-${VERSION}.apk" "apk-sha256" --clobber
           else
-            gh release create "$GITHUB_REF_NAME" "$APK" "apk-sha256" \
+            gh release create "$GITHUB_REF_NAME" "FitSync-${VERSION}.apk" "apk-sha256" \
               --title "FitSync ${VERSION}" \
               --generate-notes
           fi

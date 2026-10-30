@@ -7,14 +7,15 @@
 1. `app/build.gradle.kts`：`versionCode` +1、`versionName` 递进。
 2. `core-ui/src/main/kotlin/com/fitsync/ui/about/AboutData.kt`：**整体替换** `changeLogs` 里的那一条
    （应用内只展示最新一版，不累积历史）。
-3. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组。
-4. 构建 + 跑 `:app:testDebugUnitTest`，确认全绿再打包。
+3. 若新增/移除开源依赖，同步更新 `AboutData.kt` 的 `acknowledgements` 分组，以及 `THIRD_PARTY_NOTICES.md`。
+4. 若参考了外部开源项目（即使只借接口不抄代码），在 `THIRD_PARTY_NOTICES.md` 里写清上游许可证与「是否使用其代码」；GPL/AGPL 项目只能参考文档化的接口，不得复制代码，否则整个项目必须改为同许可证。
+5. 构建 + 跑 `:app:testDebugUnitTest`，确认全绿再打包。
 
 > 仓库里不维护 `CHANGELOG.md`；更新内容只写在 `AboutData.changeLogs`。
 
 ## 一、项目是什么
 
-Android 应用 **FitSync**：多平台健康数据聚合器，是 DailySync 移动端的原生复刻。
+Android 应用 **FitSync**：多平台健康数据聚合器，参考 DailySync 的数据组织方式独立实现（未使用其代码，见 THIRD_PARTY_NOTICES.md）。
 
 核心定位：
 - 通过**账号登录**（非 Health Connect）获取数据
@@ -861,7 +862,7 @@ Garmin **没有**把健康数据写入另一个账号的接口（日汇总 / 睡
 未验证：真实账号的复制效果（沙箱无账号）。若上传失败，`uploadActivityFile` 返回 null，
 UI 会显示"上传失败"，此时需要看 Garmin 返回体（下一步可把响应体带进错误信息）。
 
-### v0.8.0：健康数据跨区搬运（按 DailySync 的方式）
+### v0.8.0：健康数据跨区搬运（参考 DailySync 的 wellness 包方式）
 
 查了 dailysync.cn 的文档，它的机制不是"调用写接口"，而是：
 

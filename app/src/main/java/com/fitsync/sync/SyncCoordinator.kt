@@ -7,10 +7,12 @@ import com.fitsync.data.db.FitDataRepository
 import com.fitsync.data.db.SourceType
 import com.fitsync.data.health.HealthSyncService
 import com.fitsync.data.importer.LocalDataImporter
+import com.fitsync.data.settings.AccountAliasStore
 import com.fitsync.data.settings.PrimaryAccountStore
 import com.fitsync.data.settings.SyncSettings
 import com.fitsync.data.sync.ActivityCopyService
 import com.fitsync.data.sync.GarminSyncEngine
+import com.fitsync.ui.components.accountTitle
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -40,6 +42,7 @@ class SyncCoordinator @Inject constructor(
     private val localImporter: LocalDataImporter,
     private val activityCopyService: ActivityCopyService,
     private val healthSyncService: HealthSyncService,
+    private val aliasStore: AccountAliasStore,
 ) {
 
     data class UiState(
@@ -179,7 +182,7 @@ class SyncCoordinator @Inject constructor(
                 val result = syncEngine.backfillHistory(account.id, days) { done, all, label ->
                     _state.value = UiState(
                         syncing = true,
-                        message = "${account.displayName}：$label（$done/$all 天）",
+                        message = "${labelOf(account)}：$label（$done/$all 天）",
                     )
                 }
                 if (result.ok) total += result.records else failed++
@@ -231,7 +234,7 @@ class SyncCoordinator @Inject constructor(
             val (from, to) = pair
             _state.value = UiState(
                 syncing = true,
-                message = "正在复制活动：${from.displayName} → ${to.displayName}…",
+                message = "正在复制活动：${labelOf(from)} → ${labelOf(to)}…",
             )
             val result = runCatching { activityCopyService.copyRecent(from.id, to.id) }
                 .getOrElse { e ->
@@ -243,7 +246,7 @@ class SyncCoordinator @Inject constructor(
                 }
             _state.value = UiState(
                 syncing = false,
-                message = "${from.displayName} → ${to.displayName}：${result.summary}" +
+                message = "${labelOf(from)} → ${labelOf(to)}：${result.summary}" +
                     if (result.messages.isNotEmpty()) "（${result.messages.first()}）" else "",
             )
         }
@@ -255,7 +258,7 @@ class SyncCoordinator @Inject constructor(
             val (from, to) = pair
             _state.value = UiState(
                 syncing = true,
-                message = "正在搬运健康数据：${from.displayName} → ${to.displayName}…",
+                message = "正在搬运健康数据：${labelOf(from)} → ${labelOf(to)}…",
             )
             val result = runCatching { healthSyncService.copyDailyHealth(from.id, to.id, days = 7) }
                 .getOrElse { e ->
@@ -267,11 +270,24 @@ class SyncCoordinator @Inject constructor(
                 }
             _state.value = UiState(
                 syncing = false,
-                message = "${from.displayName} → ${to.displayName}：${result.summary}" +
-                    if (result.messages.isNotEmpty()) "（${result.messages.first()}）" else "",
+                message = buildString {
+                    append(labelOf(from)).append(" → ").append(labelOf(to)).append("：")
+                    append(result.summary)
+                    if (result.deviceLabel.isNotBlank()) {
+                        append("\n设备：").append(result.deviceLabel)
+                    }
+                    // 服务端已收下，但目标账号的本地库要等一次同步才有这几天
+                    if (result.uploaded > 0) {
+                        append("\n在目标账号下同步一次，首页就能看到这几天")
+                    }
+                },
             )
         }
     }
+
+    /** 消息里优先用用户自定义别名，其次才是 Garmin 昵称 */
+    private fun labelOf(account: com.fitsync.data.db.AccountEntity): String =
+        aliasStore.displayName(account.id, accountTitle(account.displayName, account.region))
 
     /** 取「主账号 + 另一个 Garmin 账号」；不足两个时给出提示并返回 null */
     private suspend fun pickTwoAccounts(

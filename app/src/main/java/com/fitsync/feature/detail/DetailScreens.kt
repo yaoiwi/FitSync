@@ -34,6 +34,7 @@ import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityLapEntity
 import com.fitsync.data.db.ActivityEntity
 import com.fitsync.feature.home.HomeViewModel
+import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
@@ -100,7 +101,7 @@ fun AccountsScreen(
                         accounts.forEachIndexed { index, account ->
                             MiuixRow(
                                 title = aliases[account.id]
-                                    ?: account.displayName.ifBlank { account.externalUserId },
+                                    ?: accountTitle(account.displayName, account.region),
                                 summary = buildString {
                                     append(regionLabel(account.region))
                                     append(" · ")
@@ -169,7 +170,7 @@ fun AccountDetailScreen(
                                 trailing = {
                                     Text(
                                         text = aliases[account.id]
-                                            ?: account.displayName.ifBlank { account.externalUserId },
+                                            ?: accountTitle(account.displayName, account.region),
                                         fontSize = 15.sp,
                                         color = MiuixSummary,
                                     )
@@ -284,8 +285,8 @@ fun AccountDetailScreen(
                         title = "修改昵称",
                         initialValue = customAlias ?: "",
                         message = "只改本应用的显示名，不会动 Garmin 账号。Garmin 原昵称："
-                            + acc.displayName.ifBlank { acc.externalUserId },
-                        placeholder = acc.displayName.ifBlank { acc.externalUserId },
+                            + accountTitle(acc.displayName, acc.region),
+                        placeholder = accountTitle(acc.displayName, acc.region),
                         confirmText = "保存",
                         neutralText = if (!customAlias.isNullOrBlank()) "恢复默认" else null,
                         onNeutral = {
@@ -302,7 +303,7 @@ fun AccountDetailScreen(
                 if (showDelete) {
                     MiuixConfirmDialog(
                         title = "移除账号",
-                        message = "会从本应用删除「${customAlias ?: acc.displayName.ifBlank { acc.externalUserId }}」"
+                        message = "会从本应用删除「${customAlias ?: accountTitle(acc.displayName, acc.region)}」"
                             + "及其在本机同步的缓存。Garmin 账号本身不受影响，之后可以重新添加。",
                         confirmText = "移除",
                         destructive = true,

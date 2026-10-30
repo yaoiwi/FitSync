@@ -128,13 +128,17 @@ class GarminSyncEngine @Inject constructor(
         val accountId = account.id
         var records = 0
 
+        // 昵称可能是空的或只剩 GUID，Garmin 的日汇总接口不认 GUID，会一直 404。
+        // 这里先换成真正能当路径用的标识（displayName 或数字 profileId）。
+        val pathUser = connectClient.resolvePathUser(account.regionEnum(), token, account.displayName)
+
         val today = LocalDate.now()
         var day = resolveFromDate(accountId, today, backfillDays)
 
         while (!day.isAfter(today)) {
             val date = day.format(dateFormatter)
-            if (saveSummary(accountId, account.regionEnum(), token, account.displayName, date)) records++
-            if (saveSleep(accountId, account.regionEnum(), token, account.displayName, date)) records++
+            if (saveSummary(accountId, account.regionEnum(), token, pathUser, date)) records++
+            if (saveSleep(accountId, account.regionEnum(), token, pathUser, date)) records++
             day = day.plusDays(1)
         }
 
@@ -293,6 +297,7 @@ class GarminSyncEngine @Inject constructor(
 
         try {
             val token = ensureToken(credential)
+            val pathUser = connectClient.resolvePathUser(region, token, account.displayName)
             var records = 0
             var done = 0
 
@@ -335,8 +340,8 @@ class GarminSyncEngine @Inject constructor(
                 val end = LocalDate.parse(shard.endDate)
                 while (!day.isAfter(end)) {
                     val date = day.format(dateFormatter)
-                    if (saveSummary(accountId, region, token, account.displayName, date)) records++
-                    if (saveSleep(accountId, region, token, account.displayName, date)) records++
+                    if (saveSummary(accountId, region, token, pathUser, date)) records++
+                    if (saveSleep(accountId, region, token, pathUser, date)) records++
                     done++
                     if (done % 5 == 0) onProgress(done, total, "已补到 $date")
                     delay(200)

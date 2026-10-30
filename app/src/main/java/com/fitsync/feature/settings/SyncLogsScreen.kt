@@ -23,6 +23,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.SyncLogEntity
 import com.fitsync.feature.home.HomeViewModel
+import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
@@ -167,7 +168,7 @@ private fun accountName(
     aliases: Map<Long, String>,
 ): String {
     val account = accounts.firstOrNull { it.id == accountId } ?: return "已删除的账号"
-    return aliases[account.id] ?: account.displayName.ifBlank { account.externalUserId }
+    return aliases[account.id] ?: accountTitle(account.displayName, account.region)
 }
 
 private fun formatTime(tsMs: Long): String {

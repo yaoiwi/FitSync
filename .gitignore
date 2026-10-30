@@ -19,7 +19,13 @@ keystore.properties
 
 # 凭据 / 本地数据
 credentials.json
+secrets.json
+config.json
 .env
+.env.*
+*.pem
+*.key
+*.p12
 
 # 系统
 .DS_Store
