@@ -9,6 +9,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
+import com.fitsync.data.settings.RateLimitGate
 import com.fitsync.data.settings.SyncSettings
 import com.fitsync.data.sync.GarminSyncEngine
 import dagger.hilt.EntryPoint
@@ -34,8 +35,16 @@ class SyncWorker(
             SyncEntryPoint::class.java,
         )
         return try {
+            // 冷却期内直接算成功退出：返回 retry 会让 WorkManager 立刻再排一次，
+            // 又变成"持续撞 429"，正是之前一直显示账号限制的原因之一
+            if (entryPoint.rateLimitGate().isBlocked()) return Result.success()
+
             val results = entryPoint.syncEngine().syncAll()
-            if (results.isEmpty() || results.all { it.second.ok }) {
+            val limited = results.firstOrNull { it.second.rateLimited }
+            if (limited != null) {
+                entryPoint.rateLimitGate().noteRateLimited(limited.second.retryAfterMs)
+                Result.success()
+            } else if (results.isEmpty() || results.all { it.second.ok }) {
                 Result.success()
             } else {
                 Result.retry()
@@ -49,6 +58,7 @@ class SyncWorker(
     @InstallIn(SingletonComponent::class)
     interface SyncEntryPoint {
         fun syncEngine(): GarminSyncEngine
+        fun rateLimitGate(): RateLimitGate
     }
 }
 

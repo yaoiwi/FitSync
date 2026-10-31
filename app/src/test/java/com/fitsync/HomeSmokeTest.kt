@@ -30,6 +30,7 @@ import com.fitsync.data.network.MemoryCookieJar
 import com.fitsync.data.network.StorableCredential
 import com.fitsync.data.health.HealthSyncService
 import com.fitsync.data.settings.HealthCopyLedger
+import com.fitsync.data.settings.RateLimitGate
 import com.fitsync.sync.SyncCoordinator
 import com.fitsync.data.sync.ActivityCopyService
 import com.fitsync.data.sync.GarminSyncEngine
@@ -132,6 +133,7 @@ class HomeSmokeTest {
             credentialStore = noopStore,
             ssoClient = GarminSsoClient(noopStore, http, MemoryCookieJar()),
             copyLedger = HealthCopyLedger(ApplicationProvider.getApplicationContext()),
+            rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
         )
     }
 
@@ -153,6 +155,7 @@ class HomeSmokeTest {
             activityCopyService = buildCopyService(repository),
             healthSyncService = buildHealthService(repository),
             aliasStore = AccountAliasStore(ApplicationProvider.getApplicationContext()),
+            rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
         )
     }
 

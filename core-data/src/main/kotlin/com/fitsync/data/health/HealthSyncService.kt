@@ -11,6 +11,7 @@ import com.fitsync.data.network.GarminSsoClient
 import com.fitsync.data.network.StorableCredential
 import com.fitsync.data.network.isTokenFresh
 import com.fitsync.data.settings.HealthCopyLedger
+import com.fitsync.data.settings.RateLimitGate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
@@ -42,6 +43,7 @@ class HealthSyncService @Inject constructor(
     private val credentialStore: CredentialStore,
     private val ssoClient: GarminSsoClient,
     private val copyLedger: HealthCopyLedger,
+    private val rateLimitGate: RateLimitGate,
 ) {
 
     data class Result(
@@ -162,13 +164,13 @@ class HealthSyncService @Inject constructor(
             return@withContext Result(error = e.message ?: "获取目标账号令牌失败")
         }
 
-        // 刚被限流过就先别打接口：继续点只会把冷却期续上
-        val cooldownMs = copyLedger.cooldownLeftMs(fromAccountId, toAccountId)
-        if (cooldownMs > 0) {
-            val minutes = (cooldownMs / 60_000L).coerceAtLeast(1L)
+        // 冷却期由一个全局闸门统一管：同步 / 搬运 / 自动同步共用一个窗口，
+        // 否则各点各的，每点一次都会把 Garmin 的限制往后推
+        if (rateLimitGate.isBlocked()) {
             return@withContext Result(
                 requestedDays = days,
-                error = "刚被 Garmin 限流，约 $minutes 分钟后再试；现在点也只会再被拒一次",
+                error = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，" +
+                    "这段时间不会再发请求（同步也会跳过）",
             )
         }
 
@@ -255,9 +257,9 @@ class HealthSyncService @Inject constructor(
                 connectClient.downloadWellnessZip(fromRegion, sourceCredential.accessToken, date)
             }.getOrElse { e ->
                 if (e is GarminNetworkException.RiskBlocked) {
-                    copyLedger.markRateLimited(fromAccountId, toAccountId)
+                    rateLimitGate.noteRateLimited(e.retryAfterMs)
                     rateLimited = true
-                    messages += "Garmin 限流（429），已停止。等 10 分钟再试"
+                    messages += "Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}"
                     break
                 }
                 failedDays++
@@ -301,7 +303,7 @@ class HealthSyncService @Inject constructor(
                     else -> {
                         dayError = outcome.errorText
                         if (outcome.code == 429) {
-                            copyLedger.markRateLimited(fromAccountId, toAccountId)
+                            rateLimitGate.noteRateLimited()
                             rateLimited = true
                         }
                     }
@@ -313,7 +315,7 @@ class HealthSyncService @Inject constructor(
             when {
                 rateLimited -> {
                     failedDays++
-                    messages += "$date：Garmin 限流（429），已停止。等 10 分钟再试"
+                    messages += "$date：Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}"
                     break
                 }
                 dayOk || dayDuplicate -> {

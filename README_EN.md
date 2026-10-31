@@ -41,7 +41,7 @@ One app for both of your Garmin accounts: steps, sleep, heart rate and workouts 
 
 ## 📖 Getting started
 
-1. Open [Releases](https://github.com/yaoiwi/FitSync/releases/latest) and download `FitSync-1.14.2.apk` (install over the old version; settings are kept).
+1. Open [Releases](https://github.com/yaoiwi/FitSync/releases/latest) and download `FitSync-1.14.3.apk` (install over the old version; settings are kept).
 2. Open the app, tap "Add account" and sign in to Garmin China or Garmin International (MFA supported)
 3. Pull to refresh — the first sync backfills 7 days; afterwards it syncs on open and every 6 hours in the background
 4. With both accounts added, use "Accounts → Data" to copy activities, migrate health data, or export your local records

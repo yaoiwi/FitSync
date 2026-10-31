@@ -17,6 +17,7 @@ import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -269,6 +270,23 @@ class GarminConnectClient @Inject constructor(
 
     // ============================ HTTP ============================
 
+    /**
+     * 读 `Retry-After`：可能是秒数，也可能是 HTTP 日期。
+     * Garmin 大多数时候不带这个头，拿不到就返回 null，由上层用默认冷却时长。
+     */
+    private fun retryAfterMs(response: Response): Long? {
+        val raw = response.header("Retry-After")?.trim().orEmpty()
+        if (raw.isEmpty()) return null
+        raw.toLongOrNull()?.let { seconds ->
+            if (seconds > 0) return seconds * 1000L
+        }
+        return runCatching {
+            val at = java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME
+                .parse(raw, java.time.ZonedDateTime::from)
+            (at.toInstant().toEpochMilli() - System.currentTimeMillis()).coerceAtLeast(0L)
+        }.getOrNull()
+    }
+
     private fun getText(url: HttpUrl, accessToken: String): String? {
         val request = Request.Builder()
             .url(url)
@@ -286,7 +304,8 @@ class GarminConnectClient @Inject constructor(
                     IOException("Connect API 403")
                 )
                 response.code == 429 -> throw GarminNetworkException.RiskBlocked(
-                    IOException("Connect API 限流（429）")
+                    IOException("Connect API 限流（429）"),
+                    retryAfterMs = retryAfterMs(response),
                 )
                 response.code >= 500 -> throw GarminNetworkException.NetworkUnavailable(
                     IOException("Connect API ${response.code}")
@@ -652,7 +671,8 @@ class GarminConnectClient @Inject constructor(
                 response.code == 401 -> throw GarminNetworkException.Unauthorized()
                 response.code == 403 || response.code == 429 ->
                     throw GarminNetworkException.RiskBlocked(
-                        IOException("wellness 下载 ${response.code}")
+                        IOException("wellness 下载 ${response.code}"),
+                        retryAfterMs = retryAfterMs(response),
                     )
                 response.code >= 500 -> throw GarminNetworkException.NetworkUnavailable(
                     IOException("wellness 下载 ${response.code}")

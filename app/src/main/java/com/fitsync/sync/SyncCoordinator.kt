@@ -9,6 +9,7 @@ import com.fitsync.data.health.HealthSyncService
 import com.fitsync.data.importer.LocalDataImporter
 import com.fitsync.data.settings.AccountAliasStore
 import com.fitsync.data.settings.PrimaryAccountStore
+import com.fitsync.data.settings.RateLimitGate
 import com.fitsync.data.settings.SyncSettings
 import com.fitsync.data.sync.ActivityCopyService
 import com.fitsync.data.sync.GarminSyncEngine
@@ -43,6 +44,7 @@ class SyncCoordinator @Inject constructor(
     private val activityCopyService: ActivityCopyService,
     private val healthSyncService: HealthSyncService,
     private val aliasStore: AccountAliasStore,
+    private val rateLimitGate: RateLimitGate,
 ) {
 
     data class UiState(
@@ -103,6 +105,8 @@ class SyncCoordinator @Inject constructor(
      */
     fun autoSyncOnOpen() {
         if (!_autoSyncOnOpen.value) return
+        // 冷却期内自动同步一次都不发：每次打开 App 的重试都会把限流窗口往后推
+        if (rateLimitGate.isBlocked()) return
         val last = SyncSettings.lastAutoSyncMs(context)
         if (System.currentTimeMillis() - last < AUTO_SYNC_INTERVAL_MS) return
         SyncSettings.markAutoSync(context, System.currentTimeMillis())
@@ -129,6 +133,18 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = false, message = null)
             return
         }
+        val cooldown = rateLimitGate.remainingMs()
+        if (cooldown > 0L) {
+            if (manual) {
+                _state.value = UiState(
+                    syncing = false,
+                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}。" +
+                        "这段时间不会发出任何请求，越点恢复越慢",
+                )
+            }
+            return
+        }
+
         _state.value = UiState(
             syncing = true,
             message = if (manual) null else "正在自动同步…",
@@ -148,15 +164,27 @@ class SyncCoordinator @Inject constructor(
 
         val records = results.sumOf { it.second.records }
         val failed = results.filter { !it.second.ok }
-        _state.value = UiState(
-            syncing = false,
-            message = when {
-                failed.isNotEmpty() ->
-                    "同步失败（${failed.size} 个账号）：${failed.first().second.message}"
-                results.isEmpty() -> if (manual) "还没有可同步的账号" else null
-                else -> if (manual) "已同步 $records 条记录" else null
-            },
-        )
+        val limited = results.firstOrNull { it.second.rateLimited }
+
+        val message = when {
+            // 429 单独说：这不是「同步坏了」，而是账号侧的冷却，且必须先停下来
+            limited != null -> {
+                rateLimitGate.noteRateLimited(limited.second.retryAfterMs)
+                "Garmin 限流（HTTP 429）：已停止请求，还有 ${rateLimitGate.waitLabel()}。" +
+                    "冷却期内的同步、搬运都会自动跳过，到点再点一次即可"
+            }
+            failed.isNotEmpty() ->
+                "同步失败（${failed.size} 个账号）：${failed.first().second.message}"
+            results.isEmpty() -> if (manual) "还没有可同步的账号" else null
+            else -> if (manual) "已同步 $records 条记录" else null
+        }
+
+        if (limited == null && failed.isEmpty() && results.isNotEmpty()) {
+            // 完整成功一次，说明账号已恢复：清掉连击计数，下次再撞也是从 10 分钟起步
+            rateLimitGate.noteSuccess()
+        }
+
+        _state.value = UiState(syncing = false, message = message)
     }
 
     /**
@@ -168,6 +196,12 @@ class SyncCoordinator @Inject constructor(
     fun backfillHistory(days: Int = SyncSettings.backfillDays(context)) {
         scope.launch {
             if (_state.value.syncing) return@launch
+            if (rateLimitGate.isBlocked()) {
+                _state.value = UiState(
+                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，现在回填只会一直撞 429",
+                )
+                return@launch
+            }
             val accounts = repository.observeEnabledAccounts().first()
                 .filter { it.sourceType == SourceType.GARMIN.code }
             if (accounts.isEmpty()) {
@@ -178,7 +212,8 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = true, message = "正在回填历史…")
             var total = 0
             var failed = 0
-            accounts.forEach { account ->
+            var limited: GarminSyncEngine.SyncOutcome? = null
+            for (account in accounts) {
                 val result = syncEngine.backfillHistory(account.id, days) { done, all, label ->
                     _state.value = UiState(
                         syncing = true,
@@ -186,13 +221,22 @@ class SyncCoordinator @Inject constructor(
                     )
                 }
                 if (result.ok) total += result.records else failed++
+                if (result.rateLimited) {
+                    limited = result
+                    break
+                }
+            }
+            if (limited != null) {
+                rateLimitGate.noteRateLimited(limited.retryAfterMs)
             }
             _state.value = UiState(
                 syncing = false,
-                message = if (failed > 0) {
-                    "回填结束：$failed 个账号失败，成功写入 $total 条"
-                } else {
-                    "回填完成，共 $total 条记录"
+                message = when {
+                    limited != null ->
+                        "回填被 Garmin 限流：已停止，还有 ${rateLimitGate.waitLabel()}。" +
+                            "已写入 $total 条，到点后可以接着回填"
+                    failed > 0 -> "回填结束：$failed 个账号失败，成功写入 $total 条"
+                    else -> "回填完成，共 $total 条记录"
                 },
             )
         }
@@ -230,6 +274,12 @@ class SyncCoordinator @Inject constructor(
 
     fun copyActivitiesToOtherAccount() {
         scope.launch {
+            if (rateLimitGate.isBlocked()) {
+                _state.value = UiState(
+                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再复制",
+                )
+                return@launch
+            }
             val pair = pickTwoAccounts("复制活动") ?: return@launch
             val (from, to) = pair
             _state.value = UiState(
@@ -254,6 +304,12 @@ class SyncCoordinator @Inject constructor(
 
     fun copyHealthToOtherAccount() {
         scope.launch {
+            if (rateLimitGate.isBlocked()) {
+                _state.value = UiState(
+                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再搬运",
+                )
+                return@launch
+            }
             val pair = pickTwoAccounts("搬运") ?: return@launch
             val (from, to) = pair
             _state.value = UiState(

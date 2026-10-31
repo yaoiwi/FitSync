@@ -53,6 +53,10 @@ class GarminSyncEngine @Inject constructor(
         val ok: Boolean,
         val records: Int,
         val message: String,
+        /** 是否因为 429 被拒：上层据此进入全局冷却，避免继续硬撞 */
+        val rateLimited: Boolean = false,
+        /** 服务端 `Retry-After` 给出的等待时长（毫秒），没有就是 null */
+        val retryAfterMs: Long? = null,
     )
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -110,7 +114,13 @@ class GarminSyncEngine @Inject constructor(
                     durationMs = System.currentTimeMillis() - startedAt,
                     error = message,
                 )
-                SyncOutcome(false, 0, message)
+                SyncOutcome(
+                    ok = false,
+                    records = 0,
+                    message = message,
+                    rateLimited = e is GarminNetworkException.RiskBlocked,
+                    retryAfterMs = (e as? GarminNetworkException.RiskBlocked)?.retryAfterMs,
+                )
             }
         }
 
@@ -134,8 +144,13 @@ class GarminSyncEngine @Inject constructor(
 
         val today = LocalDate.now()
         var day = resolveFromDate(accountId, today, backfillDays)
+        val firstDay = day
 
         while (!day.isAfter(today)) {
+            // Garmin 的限流看的是「单位时间内的请求数」，一天两次请求连着发，
+            // 7 天就是 14 个请求在几秒内打出去，很容易直接 429。
+            // 这里按天留出间隔，代价只是同步慢几秒，换来不触发风控。
+            if (day != firstDay) delay(DAY_REQUEST_GAP_MS)
             val date = day.format(dateFormatter)
             if (saveSummary(accountId, account.regionEnum(), token, pathUser, date)) records++
             if (saveSleep(accountId, account.regionEnum(), token, pathUser, date)) records++
@@ -399,7 +414,16 @@ class GarminSyncEngine @Inject constructor(
             .filter { it.sourceType == SourceType.GARMIN.code }
             // 主账号先同步：首页以它为准，先拿到它的最新数据
             .sortedByDescending { it.id == primaryFirstId }
-        return accounts.map { it.id to syncAccount(it.id, backfillDays) }
+        val results = mutableListOf<Pair<Long, SyncOutcome>>()
+        accounts.forEachIndexed { index, account ->
+            if (index > 0) delay(ACCOUNT_GAP_MS)
+            val outcome = syncAccount(account.id, backfillDays)
+            results += account.id to outcome
+            // 一个账号被限流，另一个账号此刻发请求也只会再被拒一次，
+            // 而且会让冷却窗口继续延长——直接收手
+            if (outcome.rateLimited) return results
+        }
+        return results
     }
 
     /**
@@ -487,4 +511,12 @@ class GarminSyncEngine @Inject constructor(
 
     private fun AccountEntity.regionEnum() =
         com.fitsync.data.db.AccountRegion.from(region)
+
+    private companion object {
+        /** 逐日请求之间的间隔：一天 2 个请求，400ms 间隔下 7 天约 5 秒完成 */
+        const val DAY_REQUEST_GAP_MS = 400L
+
+        /** 两个账号之间的间隔：换账号时多留一点，避免被当成连续突发 */
+        const val ACCOUNT_GAP_MS = 1_200L
+    }
 }

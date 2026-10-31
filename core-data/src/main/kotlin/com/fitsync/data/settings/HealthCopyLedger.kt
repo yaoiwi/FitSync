@@ -37,29 +37,7 @@ class HealthCopyLedger @Inject constructor(
     }
 
     fun clear(fromAccountId: Long, toAccountId: Long) {
-        prefs.edit()
-            .remove(key(fromAccountId, toAccountId))
-            .remove(rateKey(fromAccountId, toAccountId))
-            .apply()
-    }
-
-    /**
-     * 记下被 Garmin 限流的时刻。
-     *
-     * 用户被 429 之后最常见的动作就是"再点一次"，而每点一次都会把冷却期续上。
-     * 记住时间，[cooldownLeftMs] 内的搬运直接告诉用户等一会儿，不再打接口。
-     */
-    fun markRateLimited(fromAccountId: Long, toAccountId: Long) {
-        prefs.edit()
-            .putLong(rateKey(fromAccountId, toAccountId), System.currentTimeMillis())
-            .apply()
-    }
-
-    /** 还剩多久出冷却（毫秒），0 表示可以正常搬运 */
-    fun cooldownLeftMs(fromAccountId: Long, toAccountId: Long): Long {
-        val last = prefs.getLong(rateKey(fromAccountId, toAccountId), 0L)
-        if (last <= 0L) return 0L
-        return (COOLDOWN_MS - (System.currentTimeMillis() - last)).coerceAtLeast(0L)
+        prefs.edit().remove(key(fromAccountId, toAccountId)).apply()
     }
 
     /** 读 `日期=时间戳` 形式的记录，自动丢掉过期项 */
@@ -80,15 +58,10 @@ class HealthCopyLedger @Inject constructor(
 
     private fun key(from: Long, to: Long) = "copy_${from}_$to"
 
-    private fun rateKey(from: Long, to: Long) = "rate_${from}_$to"
-
     private companion object {
         const val PREFS = "fitsync_health_copy_ledger"
 
         /** 刚搬完的 24 小时内不重复搬同一天；超过就允许重试 */
         const val SKIP_WINDOW_MS = 24 * 60 * 60 * 1000L
-
-        /** Garmin 的限流窗口一般是几分钟，留 10 分钟更稳妥 */
-        const val COOLDOWN_MS = 10 * 60 * 1000L
     }
 }

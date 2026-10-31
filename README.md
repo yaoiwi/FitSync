@@ -41,7 +41,7 @@
 
 ## 📖 使用文档
 
-1. 打开 [Releases](https://github.com/yaoiwi/FitSync/releases/latest)，下载 `FitSync-1.14.2.apk`（覆盖安装即可，配置会保留）。
+1. 打开 [Releases](https://github.com/yaoiwi/FitSync/releases/latest)，下载 `FitSync-1.14.3.apk`（覆盖安装即可，配置会保留）。
 2. 打开 App，点右上角「添加账号」，登录 Garmin 中国区或国际区（支持 MFA）
 3. 首页下拉同步，第一次回填最近 7 天；之后打开即同步，后台每 6 小时一次
 4. 两个区都登录后，可在「账号 → 数据」里复制活动、搬运健康数据、导出本地记录
