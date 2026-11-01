@@ -11,6 +11,14 @@
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <!-- 触感反馈：列表行、开关、按钮、导航切换 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 长任务（一年期搬运 / 批量写回）期间阻止 CPU 休眠，锁屏后仍能继续发请求 -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- 长任务改为前台服务：只持 WakeLock 挡不住 Doze 断网与后台清理 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Android 14 起 dataSync 类型必须单独声明这个权限，否则 startForeground 直接抛 SecurityException -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Android 13 起通知要用户授权；没有也只是看不到进度，服务本身照跑 -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".FitSyncApp"
@@ -30,6 +38,15 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- 长任务保活：搬运 / 回填 / 导入写回期间把进程钉在前台，并显示进度与「停止」。
+             stopWithTask=false：从最近任务划掉 App 时不让服务跟着一起结束 —— 国产 ROM
+             仍可能直接杀进程，但至少系统层面不再主动收掉它。 -->
+        <service
+            android:name=".sync.LongTaskService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <!-- 成绩卡片分享：把 cache/share 里的 PNG 以 content:// 给出去 -->
         <provider

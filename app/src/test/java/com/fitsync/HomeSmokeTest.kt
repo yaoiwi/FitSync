@@ -137,6 +137,27 @@ class HomeSmokeTest {
         )
     }
 
+    /** 导入写回服务：首页测试不会调用它 */
+    private fun buildImportUploadService(
+        repository: com.fitsync.data.db.FitDataRepository,
+    ): com.fitsync.data.health.HealthImportUploadService {
+        val noopStore = object : CredentialStore {
+            override fun load(sourceType: String, region: String, externalUserId: String): StorableCredential? = null
+            override fun save(credential: StorableCredential) = Unit
+            override fun delete(sourceType: String, region: String, externalUserId: String) = Unit
+        }
+        val http = OkHttpClient()
+        return com.fitsync.data.health.HealthImportUploadService(
+            context = ApplicationProvider.getApplicationContext(),
+            repository = repository,
+            connectClient = GarminConnectClient(http),
+            credentialStore = noopStore,
+            ssoClient = GarminSsoClient(noopStore, http, MemoryCookieJar()),
+            copyLedger = HealthCopyLedger(ApplicationProvider.getApplicationContext()),
+            rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
+        )
+    }
+
     /** 协调器：首页测试只用到状态，构造一个指向内存库的实例 */
     private fun buildCoordinator(repository: com.fitsync.data.db.FitDataRepository): SyncCoordinator {
         val noopStore = object : CredentialStore {
@@ -154,6 +175,7 @@ class HomeSmokeTest {
             localImporter = LocalDataImporter(repository),
             activityCopyService = buildCopyService(repository),
             healthSyncService = buildHealthService(repository),
+            importUploadService = buildImportUploadService(repository),
             aliasStore = AccountAliasStore(ApplicationProvider.getApplicationContext()),
             rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
         )

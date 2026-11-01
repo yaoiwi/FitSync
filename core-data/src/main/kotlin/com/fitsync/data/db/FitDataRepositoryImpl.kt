@@ -132,6 +132,12 @@ class FitDataRepositoryImpl @Inject constructor(
     override suspend fun getActivityByExternalId(accountId: Long, externalId: String) =
         activityDao.byExternalId(accountId, externalId)
 
+    override suspend fun getActivitiesByExternalIds(
+        accountId: Long,
+        externalIds: List<String>,
+    ): List<ActivityEntity> =
+        externalIds.chunked(IN_CHUNK).flatMap { activityDao.byExternalIds(accountId, it) }
+
     override suspend fun upsertActivity(activity: ActivityEntity): Long =
         activityDao.upsert(activity)
 
@@ -229,6 +235,12 @@ class FitDataRepositoryImpl @Inject constructor(
     override suspend fun upsertDailySummaries(list: List<DailySummaryEntity>) =
         dailyDao.upsertAll(list)
 
+    override suspend fun getDailySummariesByDates(
+        accountId: Long,
+        dates: List<String>,
+    ): List<DailySummaryEntity> =
+        dates.chunked(IN_CHUNK).flatMap { dailyDao.byDates(accountId, it) }
+
     override fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>> =
         sleepDao.observeByAccount(accountId)
 
@@ -240,6 +252,12 @@ class FitDataRepositoryImpl @Inject constructor(
 
     override suspend fun getSleepSessionByExternalId(accountId: Long, externalId: String) =
         sleepDao.byExternalId(accountId, externalId)
+
+    override suspend fun getSleepSessionsByExternalIds(
+        accountId: Long,
+        externalIds: List<String>,
+    ): List<SleepSessionEntity> =
+        externalIds.chunked(IN_CHUNK).flatMap { sleepDao.byExternalIds(accountId, it) }
 
     override suspend fun upsertSleepStages(stages: List<SleepStageEntity>) =
         sleepStageDao.upsertAll(stages)
@@ -302,6 +320,12 @@ class FitDataRepositoryImpl @Inject constructor(
 
 /** 合并窗口：最多回看多少天的行（个人数据量很小，一次取回在内存里合并即可） */
 private const val MERGE_WINDOW = 120
+
+/**
+ * `IN (:list)` 的分块大小。
+ * SQLite 默认 SQLITE_MAX_VARIABLE_NUMBER 是 999，导入一年以上的数据会超，必须切块。
+ */
+private const val IN_CHUNK = 400
 
 private fun DailySummaryEntity.hasAnyData(): Boolean =
     steps > 0 || distanceM > 0.0 || caloriesActive > 0.0 || restingHr > 0 ||

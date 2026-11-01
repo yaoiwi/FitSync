@@ -61,7 +61,15 @@ class HealthCopyLedger @Inject constructor(
     private companion object {
         const val PREFS = "fitsync_health_copy_ledger"
 
-        /** 刚搬完的 24 小时内不重复搬同一天；超过就允许重试 */
-        const val SKIP_WINDOW_MS = 24 * 60 * 60 * 1000L
+        /**
+         * 搬完的日期在这段时间内不再重复搬。
+         *
+         * 原来只记 24 小时，是为了「用户怀疑没搬成功时能立刻重试」。但一次 365 天的
+         * 搬运要分好几轮点（中途撞限流、切后台被杀都会中断），24 小时的窗口会让
+         * 第二天的下一轮把前一天搬过的几百天全部重来一遍——白花几百个请求，
+         * 正是最容易被限流的动作。改成 90 天：只记成功的日期，失败的日期不记，
+         * 所以「重试」仍然有效，重试的只是没成功的那部分。
+         */
+        const val SKIP_WINDOW_MS = 90L * 24 * 60 * 60 * 1000
     }
 }

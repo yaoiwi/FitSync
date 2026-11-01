@@ -15,8 +15,10 @@ import com.fitsync.data.sync.ActivityCopyService
 import com.fitsync.data.sync.GarminSyncEngine
 import com.fitsync.ui.components.accountTitle
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -43,6 +45,7 @@ class SyncCoordinator @Inject constructor(
     private val localImporter: LocalDataImporter,
     private val activityCopyService: ActivityCopyService,
     private val healthSyncService: HealthSyncService,
+    private val importUploadService: com.fitsync.data.health.HealthImportUploadService,
     private val aliasStore: AccountAliasStore,
     private val rateLimitGate: RateLimitGate,
 ) {
@@ -59,6 +62,32 @@ class SyncCoordinator @Inject constructor(
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    /**
+     * 当前长任务（搬运 / 回填 / 导入写回）。
+     *
+     * 只留一个引用：这几件事共用 Garmin 的配额和本地库，本来就不该并行。
+     * 通知栏的「停止」取消的也是它。
+     */
+    private var longTaskJob: Job? = null
+
+    fun isLongTaskRunning(): Boolean = longTaskJob?.isActive == true
+
+    /**
+     * 通知栏「停止」的入口。
+     *
+     * 取消只影响这一次任务：`delay` 与 `withContext` 都是可取消的，
+     * 已写进 Garmin 的数据不会回滚（本来也没有删除接口）。
+     */
+    fun cancelLongTask() {
+        val job = longTaskJob
+        if (job?.isActive != true) return
+        job.cancel()
+        _state.value = UiState(
+            syncing = false,
+            message = "已停止：已完成的进度都保留，再点一次会接着做",
+        )
+    }
 
     /** 「打开即同步」开关 */
     private val _autoSyncOnOpen = MutableStateFlow(SyncSettings.autoSyncOnOpen(context))
@@ -97,6 +126,24 @@ class SyncCoordinator @Inject constructor(
     fun setBackfillDays(days: Int) {
         _backfillDays.value = days
         SyncSettings.setBackfillDays(context, days)
+    }
+
+    /** 搬运健康数据的默认跨度（7 / 30 / 90 / 365） */
+    private val _copyHealthDays = MutableStateFlow(SyncSettings.copyHealthDays(context))
+    val copyHealthDays: StateFlow<Int> = _copyHealthDays.asStateFlow()
+
+    fun setCopyHealthDays(days: Int) {
+        _copyHealthDays.value = days
+        SyncSettings.setCopyHealthDays(context, days)
+    }
+
+    /** 搬运风险说明是否已勾选「不再提示」 */
+    private val _copyRiskAcknowledged = MutableStateFlow(SyncSettings.copyRiskAcknowledged(context))
+    val copyRiskAcknowledged: StateFlow<Boolean> = _copyRiskAcknowledged.asStateFlow()
+
+    fun acknowledgeCopyRisk() {
+        _copyRiskAcknowledged.value = true
+        SyncSettings.setCopyRiskAcknowledged(context, true)
     }
 
     /**
@@ -232,7 +279,11 @@ class SyncCoordinator @Inject constructor(
      * 进度直接写进 [UiState.message]，首页/设置页都能看到。
      */
     fun backfillHistory(days: Int = SyncSettings.backfillDays(context)) {
-        scope.launch {
+        if (isLongTaskRunning()) {
+            _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
+            return
+        }
+        longTaskJob = scope.launch {
             if (_state.value.syncing) return@launch
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
@@ -247,62 +298,148 @@ class SyncCoordinator @Inject constructor(
                 return@launch
             }
 
-            _state.value = UiState(syncing = true, message = "正在回填历史…")
+            // 回填一年 ≈ 半小时，必须先进前台：否则锁屏几分钟后网络就被 Doze 掐了
+            startLongTaskService("回填历史", "准备中…")
             var total = 0
             var failed = 0
             var limited: GarminSyncEngine.SyncOutcome? = null
-            for (account in accounts) {
-                val result = syncEngine.backfillHistory(account.id, days) { done, all, label ->
-                    _state.value = UiState(
-                        syncing = true,
-                        message = "${labelOf(account)}：$label（$done/$all 天）",
-                    )
+            try {
+                _state.value = UiState(syncing = true, message = "正在回填历史…")
+                for (account in accounts) {
+                    // 前台服务保住进程和网络，CPU 还要靠 WakeLock——锁屏后没有 CPU，
+                    // delay 到点也不会恢复执行，进度会停在某一格
+                    val result = withCpuAwake {
+                        syncEngine.backfillHistory(account.id, days) { done, all, label ->
+                            val text = "${labelOf(account)}：$label（$done/$all 天）"
+                            _state.value = UiState(syncing = true, message = text)
+                            updateLongTaskService("回填历史", text, done, all)
+                        }
+                    }
+                    if (result.ok) total += result.records else failed++
+                    if (result.rateLimited) {
+                        limited = result
+                        break
+                    }
                 }
-                if (result.ok) total += result.records else failed++
-                if (result.rateLimited) {
-                    limited = result
-                    break
+                if (limited != null) {
+                    rateLimitGate.noteRateLimited(limited.retryAfterMs)
                 }
-            }
-            if (limited != null) {
-                rateLimitGate.noteRateLimited(limited.retryAfterMs)
-            }
-            _state.value = UiState(
-                syncing = false,
-                message = when {
+                val summary = when {
                     limited != null ->
                         "回填被 Garmin 限流：已停止，还有 ${rateLimitGate.waitLabel()}。" +
                             "已写入 $total 条，到点后可以接着回填"
                     failed > 0 -> "回填结束：$failed 个账号失败，成功写入 $total 条"
                     else -> "回填完成，共 $total 条记录"
-                },
-            )
+                }
+                _state.value = UiState(syncing = false, message = summary)
+                finishLongTaskService(
+                    title = if (limited == null && failed == 0) "回填完成" else "回填中断",
+                    text = summary,
+                )
+            } catch (e: CancellationException) {
+                // 用户点了通知栏的「停止」：已写入的不会回滚，再点一次从断点继续
+                finishLongTaskService("回填已停止", "已写入 $total 条，再点一次会接着回填")
+                throw e
+            } catch (e: Exception) {
+                val text = "回填失败：${e.message ?: e.javaClass.simpleName}"
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("回填失败", text)
+            }
         }
     }
 
-    fun importData(bytes: ByteArray, fileName: String) {        scope.launch {
+    /**
+     * @param targetAccountId 选择账号时，数据写进该账号并在导入后自动写回 Garmin；
+     *   传 null 则落进独立的「本地导入」账号，只留在本机。
+     */
+    fun importData(bytes: ByteArray, fileName: String, targetAccountId: Long? = null) {
+        if (isLongTaskRunning()) {
+            _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
+            return
+        }
+        longTaskJob = scope.launch {
+            // 导入本身（解压 + 解析几千天）就可能跑几分钟，写回还要更久，
+            // 整段都放在前台服务里，锁屏不会把网络掐掉
+            startLongTaskService("导入数据", "正在解析文件…")
             _state.value = UiState(syncing = true, message = "正在导入…")
-            val result = runCatching { localImporter.import(bytes, fileName) }
-                .getOrElse { error ->
-                    _state.value = UiState(
-                        syncing = false,
-                        message = "导入失败：${error.message ?: error.javaClass.simpleName}",
-                    )
-                    return@launch
-                }
-            _state.value = UiState(
-                syncing = false,
-                message = when {
-                    result.isEmpty -> "没有从文件里识别出数据（支持 Garmin 导出 zip / JSON / CSV）"
+            try {
+                val result = localImporter.import(bytes, fileName, targetAccountId)
+
+                val importMessage = when {
+                    result.isEmpty && result.fitFiles == 0 ->
+                        "没有从文件里识别出数据（支持 Garmin 导出 zip / JSON / CSV）"
                     else -> buildString {
                         append("导入完成：")
                         append("日汇总 ${result.daily}、睡眠 ${result.sleep}、活动 ${result.activities}")
+                        // 合并式写入：新增是整行、补全是只填了空缺字段，两者要分开说，
+                        // 否则用户会以为「1204 天」是又灌了一遍
+                        if (result.inserted > 0 || result.updated > 0) {
+                            append("（新增 ${result.inserted}、补全 ${result.updated}）")
+                        }
+                        if (result.skipped > 0) {
+                            append("，另有 ${result.skipped} 项本地已是最新，未改动")
+                        }
+                        if (result.fitFiles > 0) {
+                            append("；包内 ${result.fitFiles} 个 FIT")
+                        }
                         if (result.errors.isNotEmpty()) {
                             append("；${result.errors.size} 个文件失败：${result.errors.first()}")
                         }
                     }
-                },
-            )
+                }
+
+                // 没选账号、或者没解析出日期：到此为止，不碰网络
+                if (targetAccountId == null || result.dates.isEmpty()) {
+                    _state.value = UiState(syncing = false, message = importMessage)
+                    finishLongTaskService("导入完成", importMessage)
+                    return@launch
+                }
+
+                // 写回目标账号：一天 1 个请求，比搬运省钱（搬运要额外下载原始包）
+                _state.value = UiState(
+                    syncing = true,
+                    message = "$importMessage\n正在写回目标账号（共 ${result.dates.size} 天）…",
+                )
+                updateLongTaskService(
+                    title = "写回目标账号",
+                    text = "共 ${result.dates.size} 天，正在准备…",
+                    done = 0,
+                    total = result.dates.size,
+                )
+                val upload = withCpuAwake {
+                    importUploadService.uploadDates(targetAccountId, result.dates) { done, total ->
+                        _state.value = UiState(
+                            syncing = true,
+                            message = "正在写回目标账号：$done/$total 天",
+                        )
+                        updateLongTaskService(
+                            title = "写回目标账号",
+                            text = "正在写回：$done/$total 天",
+                            done = done,
+                            total = total,
+                        )
+                    }
+                }
+
+                val text = buildString {
+                    append(importMessage).append("\n").append(upload.summary)
+                    if (upload.deviceLabel.isNotBlank()) {
+                        append("\n设备：").append(upload.deviceLabel)
+                    }
+                    if (upload.uploaded > 0) {
+                        append("\n同步一次，首页就能看到这些天")
+                    }
+                }
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("导入完成", text)
+            } catch (e: CancellationException) {
+                finishLongTaskService("导入已停止", "已写进本地的数据都保留，写回可以再点一次")
+                throw e
+            } catch (e: Exception) {
+                val text = "导入失败：${e.message ?: e.javaClass.simpleName}"
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("导入失败", text)
+            }
         }
     }
 
@@ -340,8 +477,12 @@ class SyncCoordinator @Inject constructor(
         }
     }
 
-    fun copyHealthToOtherAccount() {
-        scope.launch {
+    fun copyHealthToOtherAccount(days: Int = 7) {
+        if (isLongTaskRunning()) {
+            _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
+            return
+        }
+        longTaskJob = scope.launch {
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再搬运",
@@ -350,21 +491,30 @@ class SyncCoordinator @Inject constructor(
             }
             val pair = pickTwoAccounts("搬运") ?: return@launch
             val (from, to) = pair
-            _state.value = UiState(
-                syncing = true,
-                message = "正在搬运健康数据：${labelOf(from)} → ${labelOf(to)}…",
-            )
-            val result = runCatching { healthSyncService.copyDailyHealth(from.id, to.id, days = 7) }
-                .getOrElse { e ->
-                    _state.value = UiState(
-                        syncing = false,
-                        message = "搬运失败：${e.message ?: e.javaClass.simpleName}",
-                    )
-                    return@launch
+            val label = "${labelOf(from)} → ${labelOf(to)}"
+            // 一年期搬运要 55 分钟：进前台服务，锁屏后 Doze 不会把网络掐掉
+            startLongTaskService("搬运健康数据", "正在准备：$label")
+            try {
+                _state.value = UiState(
+                    syncing = true,
+                    message = "正在搬运最近 $days 天的健康数据：$label…",
+                )
+                val result = withCpuAwake {
+                    healthSyncService.copyDailyHealth(from.id, to.id, days = days) { done, total ->
+                        // 长跨度搬运要几分钟到几十分钟，没有进度用户会以为卡死
+                        _state.value = UiState(
+                            syncing = true,
+                            message = "正在搬运：$done/$total 天（$label）",
+                        )
+                        updateLongTaskService(
+                            title = "搬运健康数据",
+                            text = "正在搬运：$done/$total 天 · $label",
+                            done = done,
+                            total = total,
+                        )
+                    }
                 }
-            _state.value = UiState(
-                syncing = false,
-                message = buildString {
+                val text = buildString {
                     append(labelOf(from)).append(" → ").append(labelOf(to)).append("：")
                     append(result.summary)
                     if (result.deviceLabel.isNotBlank()) {
@@ -373,15 +523,73 @@ class SyncCoordinator @Inject constructor(
                     // 服务端已收下，但目标账号的本地库要等一次同步才有这几天
                     if (result.uploaded > 0) {
                         append("\n在目标账号下同步一次，首页就能看到这几天")
+                        // 上传没有删除接口，必须在用户还没后悔时就说明出口
+                        append("\n想撤销只能到 Garmin Connect 网页端逐条删除这些记录")
                     }
-                },
-            )
+                }
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService(
+                    title = when {
+                        result.error != null -> "搬运失败"
+                        result.interrupted -> "搬运中断"
+                        else -> "搬运完成"
+                    },
+                    text = text.lineSequence().first(),
+                )
+            } catch (e: CancellationException) {
+                finishLongTaskService("搬运已停止", "已搬的天数都保留，再点一次会接着搬")
+                throw e
+            } catch (e: Exception) {
+                val text = "搬运失败：${e.message ?: e.javaClass.simpleName}"
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("搬运失败", text)
+            }
         }
     }
 
     /** 消息里优先用用户自定义别名，其次才是 Garmin 昵称 */
     private fun labelOf(account: com.fitsync.data.db.AccountEntity): String =
         aliasStore.displayName(account.id, accountTitle(account.displayName, account.region))
+
+    /**
+     * 起前台服务。
+     *
+     * 失败只算降级：Android 12+ 在后台启动前台服务会抛
+     * `ForegroundServiceStartNotAllowedException`，部分 ROM 也会拦。
+     * 这时候任务仍靠 [withCpuAwake] 的 WakeLock 跑，只是锁屏久了可能被 Doze 断网——
+     * 比让整件事直接崩掉好。
+     */
+    private fun startLongTaskService(title: String, text: String) {
+        runCatching { LongTaskService.start(context, title, text) }
+    }
+
+    private fun updateLongTaskService(title: String, text: String, done: Int?, total: Int?) {
+        runCatching { LongTaskService.update(context, title, text, done, total) }
+    }
+
+    private fun finishLongTaskService(title: String, text: String) {
+        runCatching { LongTaskService.finish(context, title, text) }
+    }
+
+    /**
+     * 长任务期间持有 CPU 唤醒锁。
+     *
+     * 一年期搬运要五十分钟上下、批量写回也要十几分钟，用户必然会把屏幕锁上。
+     * 前台服务负责「进程不被回收、网络不被 Doze 切断」，但**不保证 CPU 不休眠**，
+     * 所以两者要一起用：没有 CPU，`delay` 到点也不会恢复执行，进度就停在某一格。
+     */
+    private suspend fun <T> withCpuAwake(block: suspend () -> T): T {
+        val power = context.getSystemService(Context.POWER_SERVICE) as? android.os.PowerManager
+        val lock = power?.newWakeLock(
+            android.os.PowerManager.PARTIAL_WAKE_LOCK,
+            "FitSync:longTask",
+        )?.apply { runCatching { acquire(WAKE_LOCK_TIMEOUT_MS) } }
+        return try {
+            block()
+        } finally {
+            runCatching { if (lock?.isHeld == true) lock.release() }
+        }
+    }
 
     /** 取「主账号 + 另一个 Garmin 账号」；不足两个时给出提示并返回 null */
     private suspend fun pickTwoAccounts(
@@ -425,5 +633,11 @@ class SyncCoordinator @Inject constructor(
          * 和参考项目（DailySync 每 3 小时跑一次）在同一量级。
          */
         const val AUTO_SYNC_INTERVAL_MS = 30 * 60_000L
+
+        /**
+         * 唤醒锁超时：一年期搬运约 55 分钟，留到 90 分钟。
+         * 超时自动释放，避免异常路径把 CPU 一直按着不放导致耗电。
+         */
+        const val WAKE_LOCK_TIMEOUT_MS = 90 * 60_000L
     }
 }

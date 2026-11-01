@@ -1014,3 +1014,174 @@ UI 会显示"上传失败"，此时需要看 Garmin 返回体（下一步可把�
 SVG 白色图形 → `drawable/ic_launcher_foreground.xml`（VectorDrawable），
 背景渐变 → `drawable/ic_launcher_bg.xml`（shape gradient），
 `mipmap-anydpi-v26/ic_launcher.xml` 组合（minSdk 26，无需低版本 PNG 兜底）。
+
+## 二十三、搬运跨度可选 + 导入直接写回账号（1.14.11）
+
+### 1. 搬运跨度：7 / 30 / 90 / 365
+
+`HealthSyncService.copyDailyHealth(days)` 原来只被写死调用 7 天。现在：
+
+| 常量 | 值 | 理由 |
+|---|---|---|
+| `MAX_DAYS_PER_SHARD` | 120 | 约 360 个请求，9 分钟，单片不容易撞限流 |
+| `SHARD_REST_MS` | 90 秒 | 触发账号锁定的是**连续请求密度**，不是总请求数 |
+| `MAX_COPY_DAYS` | 730 | Garmin 对第三方只开放约 2 年健康指标回溯，再往前要不到数据 |
+| `UPLOAD_GAP_MS` / `DAY_GAP_MS` | 1.5 秒 | 从 0.8/1.2 秒放慢。1.14 之前一天 4 秒推完，批量时太密 |
+
+365 天 ≈ 1100 个请求 ≈ 55 分钟，分 4 片自动续跑。`SyncCoordinator.withCpuAwake`
+在整个任务期间持有 `PARTIAL_WAKE_LOCK`（90 分钟超时）——否则锁屏后 CPU 休眠，
+进度会停在某一格再也不动。
+
+### 2. 去重：ledger 窗口 24 小时 → 90 天
+
+`HealthCopyLedger.SKIP_WINDOW_MS`。只记**成功**的日期，失败的日期不记，
+所以窗口拉长不影响重试：重试的只是没成功的那部分。
+
+三层去重同时生效：
+1. 目标账号本地已有该日期 → 跳过；
+2. ledger 记过 → 跳过；
+3. 服务端 409 `Duplicate Wellness File` → 计入"已有"，不再重试。
+
+### 3. 导入：嵌套 zip + FIT 识别 + 写进目标账号
+
+`LocalDataImporter` 原来是"把 zip 展开成 (name, text) 列表再解析"，
+真实导出包（几百 MB 到几 GB、嵌套 `UploadedFiles_*.zip`）会直接 OOM。现在改为
+`walk()` 边读边处理：
+
+- 嵌套 zip 直接在同一个 `ZipInputStream` 上再开一层（**不能 close 内层**，
+  否则会把外层流一起关掉）；
+- `.fit` 用 `FitProbe` 只读 `file_id`（type / time_created），
+  活动（type=4）只统计不解析——活动摘要由 `summarizedActivities.json` 提供，
+  几千个 FIT 全解一遍会让导入慢十倍；
+- wellness FIT（type 14/20/28/32）取 `time_created` 的 UTC 日期，作为"这天有数据"的兜底。
+
+`import(bytes, fileName, targetAccountId)`：给了账号就写进该账号，
+不再创建「本地导入」虚拟账号。
+
+### 4. 写回：重建 monitoring FIT，不直传原始包
+
+`HealthImportUploadService`。为什么不直传导出的原始 FIT：
+
+- 导出包里健康数据主要是 **JSON**（`DI-Connect-UDS` / `DI-Connect-Wellness`），FIT 是活动与杂项混装；
+- 原始 FIT 的设备身份是当年的手表，目标账号不一定还绑着 → 419 `Wellness device is not active`。
+
+所以按本地日汇总用 `MonitoringFitBuilder` 重建，设备身份取目标账号当前绑定的那块表。
+**代价**：重建的是日总量（步数/睡眠/压力按合理分布铺点），没有原始秒级曲线；
+要保留原始曲线只能走「搬运」（转发源账号原始 wellness 包）。
+
+导入写回在 ledger 里用哨兵 `IMPORT_SOURCE_ID = -1`，与真实的账号搬运分开记账。
+
+## 二十四、导入合并写入 + 搬运风险告知（1.14.12）
+
+### 1. 导入从「整行覆盖」改成「字段级合并」
+
+根因是解析层把「字段不存在」和「值为 0」都变成 `0`，写库又是整行 `REPLACE`：
+
+- `firstInt/firstDouble/firstLong` → `optInt/optDouble/optLong`，**返回 null 表示字段不存在**；
+- 解析产物改成 `PartialDaily / PartialSleep / PartialActivity`（字段全可空）；
+- 同批次内用 `foldIn()` 逐字段「先到优先、空缺补齐」（原来是 `putIfAbsent`，后一份整份丢掉）；
+- 写库前用 `getDailySummariesByDates / getSleepSessionsByExternalIds / getActivitiesByExternalIds`
+  批量读旧行，合并时 `新值 ?: 旧值 ?: 默认`；
+- 保留旧行 `id`，REPLACE 时不换主键。
+
+`hasSignal` 刻意**不要求非零**：卧床那天步数就是 0，用 `>0` 判断会把真实数据永久挡在门外。
+误判靠字段名把住（`readDaily` 只认 UDS 那套键，活动对象没有 `calendarDate`）。
+
+统计：`inserted / updated / skipped`（skipped = 合并后与旧行完全一致），
+UI 文案「新增 x、补全 y，另有 z 项本地已是最新」。
+
+DAO 的 `IN (:dates)` 按 400 一批切（SQLite 变量上限 999），见 `FitDataRepositoryImpl.IN_CHUNK`。
+
+### 2. 搬运风险告知：卡片 + 两层弹窗
+
+- 页面新增「风险说明」卡片（5 条），原来那行「实验功能」灰字删掉；
+- 点按钮弹 `AlertDialog`：通用 4 条风险 + 「以后不再提示」勾选（存 `SyncSettings.KEY_COPY_RISK_ACK`）；
+- **365 天每次都会弹**，只讲耗时与锁屏中断（`riskAcknowledged && longSpan` 时标题变「这次会跑很久」）；
+- 限流提示补「这段时间不要再重试」，搬运成功消息补「想撤销只能到 Garmin Connect 网页端逐条删除」。
+
+### 3. 未做（下一版候选）
+
+- **前台服务 + 常驻通知**：当前只有 `PARTIAL_WAKE_LOCK`（90 分钟超时），没有 `service`。
+  锁屏静止约 30 分钟进入 Doze 后，wakelock 被忽略、网络被挂起，1 年这种 55 分钟的任务
+  大概率在 30 分钟附近停住（充电时 Doze 不生效，可以跑完）；国产 ROM 后台清理还会直接杀进程。
+  要做稳定后台搬运，必须加 `FOREGROUND_SERVICE_DATA_SYNC` 前台服务，把
+  `copyDailyHealth` / `uploadDates` 搬进去。
+- 导入不做「已有就跳过」而是合并不是偷懒：跳过会导致导入包比本地全时也补不进来。
+
+## 二十五、长任务前台服务（1.14.13）
+
+### 1. 为什么必须做
+
+上一版只持 `PARTIAL_WAKE_LOCK`，挡不住两件事：
+
+- **Doze**：屏幕熄灭静止约 30 分钟后系统挂起网络，`delay` 到点也发不出请求，
+  一年期搬运（约 55 分钟）基本都在 30 分钟附近停住；
+- **后台回收**：普通后台进程按内存压力被 LMK 收，国产 ROM 还有自己的清理策略。
+
+前台服务把进程提到「用户可见」优先级：Doze 不限制前台服务的网络，清理顺序也排最后。
+
+### 2. 结构：服务只保活，任务仍在 Coordinator
+
+`app/src/main/java/com/fitsync/sync/LongTaskService.kt`（`@AndroidEntryPoint`）
+
+- `ACTION_START` → `startForeground`（`dataSync` 类型）+ 常驻通知；
+- `ACTION_UPDATE` → 同一个 id `notify`，刷新「已处理 / 总数」进度条；
+- `ACTION_FINISH` → 通知改成可滑掉的结果提示，`stopForeground(STOP_FOREGROUND_DETACH)` 保留通知；
+- `ACTION_STOP` → 通知栏「停止」，调用 `coordinator.cancelLongTask()`。
+
+**为什么不在 Service 里跑任务**：界面状态全挂在 `SyncCoordinator.state` 这个 StateFlow 上，
+Service 再存一份必然两边不同步。服务只负责「进程优先级 + 通知」，活儿还是协程干。
+
+`foreground` 字段用来区分「服务已在前台」和「被 startService 唤起又结束」：
+`ACTION_UPDATE/FINISH` 在未前台时必须直接 `stopSelf()`，否则会在后台调 `startForeground` 直接 ANR。
+
+### 3. 接入点
+
+`SyncCoordinator` 新增 `longTaskJob` / `isLongTaskRunning()` / `cancelLongTask()`，
+三个长任务统一走 `startLongTaskService / updateLongTaskService / finishLongTaskService`：
+
+| 任务 | 通知标题 | 进度 |
+| --- | --- | --- |
+| `copyHealthToOtherAccount` | 搬运健康数据 | `done/total` 天 |
+| `backfillHistory` | 回填历史 | `done/all` 天 |
+| `importData` | 导入数据 → 写回目标账号 | `done/total` 天 |
+
+取消路径：`delay` 与 `withContext(IO)` 都可取消，抛 `CancellationException`
+→ `catch` 里 `finish` 通知 + `throw e`（**不能**被 `runCatching` 吞成「搬运失败」）。
+`withCpuAwake` 的 `finally` 负责释放 WakeLock。
+
+`startForegroundService` 全部包在 `runCatching` 里：Android 12+ 后台启动会抛
+`ForegroundServiceStartNotAllowedException`，部分 ROM 也拦。失败只算降级（退回只有 WakeLock），
+不能让整个任务崩掉。
+
+### 4. 通知权限
+
+`app/src/main/java/com/fitsync/permission/NotificationPermission.kt` 里的
+`rememberNotificationPermissionGate()`：只在点「开始」那一刻请求（搬运页、设置页回填），
+不在启动时弹。**拒绝也继续跑**——前台服务的合法性不依赖通知权限，缺的只是进度可见与停止入口。
+
+### 5. 清单
+
+```xml
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+<uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+<service
+    android:name=".sync.LongTaskService"
+    android:exported="false"
+    android:foregroundServiceType="dataSync"
+    android:stopWithTask="false" />
+```
+
+`stopWithTask=false`：从最近任务划掉 App 时服务不跟着结束。
+Android 14 起 `dataSync` 必须单独声明 `FOREGROUND_SERVICE_DATA_SYNC`，否则 `startForeground` 抛 `SecurityException`。
+
+### 6. 已知限制（下一版候选）
+
+- **进程被杀任务就没了**：没有把任务状态落盘，杀了再打开是干净的初始态。
+  好在搬运有 ledger + 本地库两层去重，手动再点一次会从剩下的继续。
+- **Android 15 对 `dataSync` 有 6 小时 / 24 小时配额**：本项目的任务最长 55 分钟，够用；
+  若以后加「全量 730 天 + 长时间限流重试」，需要处理 `Service.onTimeout()`。
+- 没做 `WorkManager` 长任务（`setForeground`）替代：搬运需要精确的「停顿—重试」节奏与
+  实时进度，WorkManager 的调度粒度不合适。

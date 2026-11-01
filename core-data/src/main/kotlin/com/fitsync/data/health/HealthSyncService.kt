@@ -57,6 +57,10 @@ class HealthSyncService @Inject constructor(
         val noDataDays: Int = 0,
         /** 请求搬运的天数 */
         val requestedDays: Int = 0,
+        /** 实际处理过的天数（含跳过、失败、无数据） */
+        val doneDays: Int = 0,
+        /** 因限流或冷却中途停下；已搬的天数仍然有效，再点一次会从剩下的继续 */
+        val interrupted: Boolean = false,
         /** 目标账号本地已有数据而跳过 */
         val skippedExisting: Int = 0,
         /** 之前已经搬过（本地有记录）而跳过 */
@@ -133,16 +137,23 @@ class HealthSyncService @Inject constructor(
                         if (failed > 0) append("，失败 ").append(failed).append(" 天")
                         val notes = skipNotes
                         if (notes.isNotEmpty()) append("；").append(notes.joinToString("，"))
+                        if (interrupted) append("。中途停止，再点一次会接着搬剩下的")
                     }
                 }
                 return base
             }
     }
 
+    /**
+     * @param days 搬运跨度。允许到 [MAX_COPY_DAYS]；内部按 [MAX_DAYS_PER_SHARD] 天分片，
+     *   片与片之间强制休息，避免连续请求把账号推进 48 小时锁定。
+     * @param onProgress 每处理完一天回调一次（已处理, 总数），给界面显示进度用。
+     */
     suspend fun copyDailyHealth(
         fromAccountId: Long,
         toAccountId: Long,
         days: Int = 7,
+        onProgress: ((done: Int, total: Int) -> Unit)? = null,
     ): Result = withContext(Dispatchers.IO) {
         if (fromAccountId == toAccountId) {
             return@withContext Result(error = "源账号和目标账号相同")
@@ -151,6 +162,8 @@ class HealthSyncService @Inject constructor(
             ?: return@withContext Result(error = "源账号不存在")
         val to = repository.getAccount(toAccountId)
             ?: return@withContext Result(error = "目标账号不存在")
+        // 超出 Garmin 回溯窗口的部分要不到数据，直接截断，不要白花请求
+        val span = days.coerceIn(1, MAX_COPY_DAYS)
         if (from.sourceType != SourceType.GARMIN.code || to.sourceType != SourceType.GARMIN.code) {
             return@withContext Result(error = "搬运只能在同一数据源类型之间进行（Garmin → Garmin）")
         }
@@ -168,7 +181,7 @@ class HealthSyncService @Inject constructor(
         // 否则各点各的，每点一次都会把 Garmin 的限制往后推
         if (rateLimitGate.isBlocked()) {
             return@withContext Result(
-                requestedDays = days,
+                requestedDays = span,
                 error = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，" +
                     "这段时间不会再发请求（同步也会跳过）",
             )
@@ -177,7 +190,7 @@ class HealthSyncService @Inject constructor(
         val devices = connectClient.fetchDevicesDetailed(toRegion, targetCredential.accessToken)
         if (devices.devices.isEmpty()) {
             return@withContext Result(
-                requestedDays = days,
+                requestedDays = span,
                 deviceRaw = devices.rawSnippet,
                 error = devices.error?.let { reason ->
                     buildString {
@@ -225,14 +238,15 @@ class HealthSyncService @Inject constructor(
             .map { it.date }
             .toSet()
         val copiedDates = copyLedger.copiedDates(fromAccountId, toAccountId)
-        val wantedDates = (0 until days).map { LocalDate.now().minusDays(it.toLong()).toString() }
+        val wantedDates = (0 until span)
+            .map { LocalDate.now().minusDays(it.toLong()).toString() }
         val pending = wantedDates.filter { it !in targetDates && it !in copiedDates }
         val skippedExisting = wantedDates.count { it in targetDates }
         val skippedCopied = wantedDates.count { it !in targetDates && it in copiedDates }
 
         if (pending.isEmpty()) {
             return@withContext Result(
-                requestedDays = days,
+                requestedDays = span,
                 skippedExisting = skippedExisting,
                 skippedCopied = skippedCopied,
                 deviceName = device.name,
@@ -247,93 +261,122 @@ class HealthSyncService @Inject constructor(
         var duplicateDays = 0
         var noDataDays = 0
         var failedDays = 0
+        var processedDays = 0
+        var interrupted = false
         val uploadedDates = mutableListOf<String>()
         val messages = mutableListOf<String>()
         var rateLimited = false
 
-        for (date in pending) {
-            // 一天一个 zip，里面通常 1~3 个 FIT（monitoring / sleep / stress）
-            val zip = runCatching {
-                connectClient.downloadWellnessZip(fromRegion, sourceCredential.accessToken, date)
-            }.getOrElse { e ->
-                if (e is GarminNetworkException.RiskBlocked) {
-                    rateLimitGate.noteRateLimited(e.retryAfterMs)
-                    rateLimited = true
-                    messages += "Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}"
-                    break
+        // 分片跑：连续请求密度是触发账号级锁定的关键，不是总请求数。
+        // 每片最多 MAX_DAYS_PER_SHARD 天，片间休息 SHARD_REST_MS，期间一旦发现冷却立刻停。
+        val shards = pending.chunked(MAX_DAYS_PER_SHARD)
+        shardLoop@ for ((shardIndex, shard) in shards.withIndex()) {
+            if (shardIndex > 0) {
+                delay(SHARD_REST_MS)
+                if (rateLimitGate.isBlocked()) {
+                    interrupted = true
+                    messages += "第 ${shardIndex + 1} 片开始前仍在冷却，已停止"
+                    break@shardLoop
                 }
-                failedDays++
-                messages += "$date：读取源账号数据失败（${e.message ?: e.javaClass.simpleName}）"
-                delay(DAY_GAP_MS)
-                continue
             }
+            for (date in shard) {
+                // 一天一个 zip，里面通常 1~3 个 FIT（monitoring / sleep / stress）
+                val zipAttempt = runCatching {
+                    connectClient.downloadWellnessZip(fromRegion, sourceCredential.accessToken, date)
+                }
+                val failure = zipAttempt.exceptionOrNull()
+                if (failure != null) {
+                    if (failure is GarminNetworkException.RiskBlocked) {
+                        rateLimitGate.noteRateLimited(failure.retryAfterMs)
+                        rateLimited = true
+                        messages += "Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}，这段时间不要再重试"
+                        break@shardLoop
+                    }
+                    failedDays++
+                    processedDays++
+                    onProgress?.invoke(processedDays, pending.size)
+                    messages += "$date：读取源账号数据失败（${failure.message ?: failure.javaClass.simpleName}）"
+                    delay(DAY_GAP_MS)
+                    continue
+                }
+                val zip = zipAttempt.getOrNull()
 
-            if (zip == null) {
-                noDataDays++
-                messages += "$date：源账号没有这天的 wellness 数据"
-                delay(DAY_GAP_MS)
-                continue
-            }
+                if (zip == null) {
+                    noDataDays++
+                    processedDays++
+                    onProgress?.invoke(processedDays, pending.size)
+                    messages += "$date：源账号没有这天的 wellness 数据"
+                    delay(DAY_GAP_MS)
+                    continue
+                }
 
-            val fits = WellnessPackage.extract(zip)
-            if (fits.isEmpty()) {
-                noDataDays++
-                messages += "$date：包内没有 FIT 文件"
-                delay(DAY_GAP_MS)
-                continue
-            }
+                val fits = WellnessPackage.extract(zip)
+                if (fits.isEmpty()) {
+                    noDataDays++
+                    processedDays++
+                    onProgress?.invoke(processedDays, pending.size)
+                    messages += "$date：包内没有 FIT 文件"
+                    delay(DAY_GAP_MS)
+                    continue
+                }
 
-            var dayOk = false
-            var dayDuplicate = false
-            var dayError = ""
+                var dayOk = false
+                var dayDuplicate = false
+                var dayError = ""
 
-            for (fit in fits) {
-                val outcome = connectClient.uploadActivityFileOutcome(
-                    region = toRegion,
-                    accessToken = targetCredential.accessToken,
-                    fileName = fit.name,
-                    bytes = fit.bytes,
-                    oauth1Token = targetCredential.oauth1Token,
-                    oauth1Secret = targetCredential.oauth1Secret,
-                    fieldName = WELLNESS_FORM_FIELD,
-                )
+                for (fit in fits) {
+                    val outcome = connectClient.uploadActivityFileOutcome(
+                        region = toRegion,
+                        accessToken = targetCredential.accessToken,
+                        fileName = fit.name,
+                        bytes = fit.bytes,
+                        oauth1Token = targetCredential.oauth1Token,
+                        oauth1Secret = targetCredential.oauth1Secret,
+                        fieldName = WELLNESS_FORM_FIELD,
+                    )
+                    when {
+                        outcome.ok -> dayOk = true
+                        outcome.duplicate -> dayDuplicate = true
+                        else -> {
+                            dayError = outcome.errorText
+                            if (outcome.code == 429) {
+                                rateLimitGate.noteRateLimited()
+                                rateLimited = true
+                            }
+                        }
+                    }
+                    delay(UPLOAD_GAP_MS)
+                    if (rateLimited) break
+                }
+
+                if (rateLimited) {
+                    failedDays++
+                    processedDays++
+                    onProgress?.invoke(processedDays, pending.size)
+                    messages += "$date：Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}，这段时间不要再重试"
+                    break@shardLoop
+                }
+
                 when {
-                    outcome.ok -> dayOk = true
-                    outcome.duplicate -> dayDuplicate = true
+                    dayOk || dayDuplicate -> {
+                        // 409 也算搬完了：目标账号本来就有这天的文件
+                        if (dayOk) uploadedDays++ else duplicateDays++
+                        uploadedDates += date
+                        copyLedger.markCopied(fromAccountId, toAccountId, date)
+                    }
                     else -> {
-                        dayError = outcome.errorText
-                        if (outcome.code == 429) {
-                            rateLimitGate.noteRateLimited()
-                            rateLimited = true
+                        failedDays++
+                        messages += "$date：${dayError.ifBlank { "上传未成功" }}"
+                        if (dayError.contains("419")) {
+                            messages += "419 表示目标账号没有活跃的 wellness 设备：先在手机 Garmin Connect " +
+                                "打开一次设备页、确认能看到步数，再回来重试"
                         }
                     }
                 }
-                delay(UPLOAD_GAP_MS)
-                if (rateLimited) break
+                processedDays++
+                onProgress?.invoke(processedDays, pending.size)
+                delay(DAY_GAP_MS)
             }
-
-            when {
-                rateLimited -> {
-                    failedDays++
-                    messages += "$date：Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}"
-                    break
-                }
-                dayOk || dayDuplicate -> {
-                    // 409 也算搬完了：目标账号本来就有这天的文件
-                    if (dayOk) uploadedDays++ else duplicateDays++
-                    uploadedDates += date
-                    copyLedger.markCopied(fromAccountId, toAccountId, date)
-                }
-                else -> {
-                    failedDays++
-                    messages += "$date：${dayError.ifBlank { "上传未成功" }}"
-                    if (dayError.contains("419")) {
-                        messages += "419 表示目标账号没有活跃的 wellness 设备：先在手机 Garmin Connect " +
-                            "打开一次设备页、确认能看到步数，再回来重试"
-                    }
-                }
-            }
-            delay(DAY_GAP_MS)
         }
 
         Result(
@@ -341,7 +384,9 @@ class HealthSyncService @Inject constructor(
             duplicateDays = duplicateDays,
             failed = failedDays,
             noDataDays = noDataDays,
-            requestedDays = days,
+            requestedDays = span,
+            doneDays = processedDays,
+            interrupted = interrupted || rateLimited,
             skippedExisting = skippedExisting,
             skippedCopied = skippedCopied,
             uploadedDates = uploadedDates,
@@ -386,11 +431,31 @@ class HealthSyncService @Inject constructor(
         /** wellness 上传的表单字段名，与 Garmin 官网一致 */
         const val WELLNESS_FORM_FIELD = "userfile"
 
-        /** 同一天多个 FIT 之间的间隔 */
-        const val UPLOAD_GAP_MS = 800L
+        /**
+         * 单次运行最多搬多少天。
+         *
+         * 一天大约 3 个请求（1 下载 + 1~3 上传）。按 [DAY_GAP_MS] 的节奏，
+         * 120 天 ≈ 360 个请求 ≈ 9 分钟，是"点一次就能看完"且不容易撞限流的长度。
+         * 更大的跨度由调用方多次调用累加，或者在这里分片后自动续跑。
+         */
+        const val MAX_DAYS_PER_SHARD = 120
+
+        /** 分片之间强制休息：连续请求密度才是触发账号级锁定的原因 */
+        const val SHARD_REST_MS = 90_000L
+
+        /**
+         * 单次调用允许的最大跨度。
+         *
+         * Garmin 对第三方只开放约 2 年的健康指标回溯（活动 5 年），再往前要不到数据，
+         * 请求也白花——所以超过这个值直接截断。
+         */
+        const val MAX_COPY_DAYS = 730
+
+        /** 同一天多个 FIT 之间的间隔。1.14 起 0.8 秒太密，遇到大批量时容易撞 429 */
+        const val UPLOAD_GAP_MS = 1500L
 
         /** 不同日期之间的间隔 */
-        const val DAY_GAP_MS = 1200L
+        const val DAY_GAP_MS = 1500L
     }
 }
 

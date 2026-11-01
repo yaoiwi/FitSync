@@ -24,6 +24,12 @@ object SyncSettings {
     /** 「回填历史」默认补多少天 */
     const val KEY_BACKFILL_DAYS = "backfill_days"
 
+    /** 「搬运健康数据」默认搬多少天 */
+    const val KEY_COPY_HEALTH_DAYS = "copy_health_days"
+
+    /** 搬运风险说明是否已勾选「不再提示」（长跨度仍会提醒耗时） */
+    const val KEY_COPY_RISK_ACK = "copy_risk_ack"
+
     /** 上次自动同步时间（节流用） */
     const val KEY_LAST_AUTO_SYNC = "last_auto_sync_ms"
 
@@ -55,6 +61,20 @@ object SyncSettings {
 
     fun setBackfillDays(context: Context, days: Int) {
         prefs(context).edit().putInt(KEY_BACKFILL_DAYS, days).apply()
+    }
+
+    fun copyHealthDays(context: Context): Int =
+        prefs(context).getInt(KEY_COPY_HEALTH_DAYS, 7)
+
+    fun setCopyHealthDays(context: Context, days: Int) {
+        prefs(context).edit().putInt(KEY_COPY_HEALTH_DAYS, days).apply()
+    }
+
+    fun copyRiskAcknowledged(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_COPY_RISK_ACK, false)
+
+    fun setCopyRiskAcknowledged(context: Context, acknowledged: Boolean) {
+        prefs(context).edit().putBoolean(KEY_COPY_RISK_ACK, acknowledged).apply()
     }
 
     fun lastAutoSyncMs(context: Context): Long =

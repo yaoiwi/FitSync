@@ -52,6 +52,12 @@ interface FitDataRepository {
     fun observeActivityCount(accountId: Long?): Flow<Int>
     suspend fun getActivity(activityId: Long): ActivityEntity?
     suspend fun getActivityByExternalId(accountId: Long, externalId: String): ActivityEntity?
+
+    /** 导入合并用：批量取回这批活动的旧行（分块查询，避免 SQLite 变量上限） */
+    suspend fun getActivitiesByExternalIds(
+        accountId: Long,
+        externalIds: List<String>,
+    ): List<ActivityEntity>
     suspend fun upsertActivity(activity: ActivityEntity): Long
     suspend fun upsertActivitySamples(samples: List<ActivitySampleEntity>)
     suspend fun upsertActivityRoutes(routes: List<ActivityRouteEntity>)
@@ -84,10 +90,22 @@ interface FitDataRepository {
      */
     fun observeMergedRecentActivities(primaryAccountId: Long?, limit: Int): Flow<List<ActivityEntity>>
     suspend fun upsertDailySummaries(list: List<DailySummaryEntity>)
+
+    /** 导入合并用：批量取回这批日期的旧行（分块查询，避免 SQLite 变量上限） */
+    suspend fun getDailySummariesByDates(
+        accountId: Long,
+        dates: List<String>,
+    ): List<DailySummaryEntity>
     fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>>
     fun observeLatestSleep(): Flow<SleepSessionEntity?>
     suspend fun upsertSleepSession(session: SleepSessionEntity): Long
     suspend fun getSleepSessionByExternalId(accountId: Long, externalId: String): SleepSessionEntity?
+
+    /** 导入合并用：批量取回这批睡眠的旧行（分块查询，避免 SQLite 变量上限） */
+    suspend fun getSleepSessionsByExternalIds(
+        accountId: Long,
+        externalIds: List<String>,
+    ): List<SleepSessionEntity>
     suspend fun upsertSleepStages(stages: List<SleepStageEntity>)
     suspend fun deleteSleepStages(sessionId: Long)
     fun observeSleepStages(sessionId: Long): Flow<List<SleepStageEntity>>

@@ -67,6 +67,7 @@ import com.fitsync.copyToClipboard
 import com.fitsync.data.network.GarminDiagnostics
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
+import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HapticFeedback
@@ -1030,6 +1031,8 @@ private fun SettingsTab(
     val intervalIndex = intervalValues.indexOf(syncIntervalHours).let { if (it < 0) 0 else it }
     val backfillValues = listOf(30, 90, 365)
     val backfillIndex = backfillValues.indexOf(backfillDays).let { if (it < 0) 2 else it }
+    // 回填同样是长任务：先要通知权限，再交给前台服务跑
+    val ensureNotification = rememberNotificationPermissionGate()
 
     // 冷却倒计时：每秒刷新一次，值没变时 Compose 不会重组，开销可以忽略
     var cooldownMs by remember { mutableStateOf(0L) }
@@ -1161,7 +1164,7 @@ private fun SettingsTab(
                     title = "回填历史",
                     summary = "拉取过去一年的日汇总、睡眠与全部活动（较慢）",
                     showArrow = true,
-                    onClick = onBackfill,
+                    onClick = { ensureNotification(onBackfill) },
                 )
                 Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
                     Text(text = "回填范围", fontSize = 12.sp, color = MiuixSummary)

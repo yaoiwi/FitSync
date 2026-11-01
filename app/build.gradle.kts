@@ -16,8 +16,8 @@ android {
         applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 80
-        versionName = "1.14.10"
+        versionCode = 83
+        versionName = "1.14.13"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -100,6 +100,8 @@ dependencies {
     // Activity & Lifecycle
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    // ServiceCompat.startForeground（带 foregroundServiceType）从这里来
+    implementation(libs.androidx.core.ktx)
     // 注意：不要加 lifecycle-runtime-compose 2.8.x —— 它的 LocalLifecycleOwner 与 Compose 1.6.x 不兼容，
     // 用 collectAsStateWithLifecycle 会在首帧抛 "CompositionLocal LocalLifecycleOwner not present"。
     // 等 Compose 升到 1.7+ 再启用。

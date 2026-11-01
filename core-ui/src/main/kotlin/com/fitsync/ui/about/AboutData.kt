@@ -40,14 +40,15 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "1.14.10",
+            version = "1.14.13",
             date = "2026-11-01",
             highlights = listOf(
-                "换掉了「一直 403」的真正原因：日汇总接口的 URL 里带了账号（/usersummary/daily/{账号}），Garmin 新网关把这判成越权访问，直接回 message 为 null 的 ForbiddenException。现在改成不带账号的 /usersummary/daily/?calendarDate=，由令牌自己决定读谁的数据（老网关不认时自动退回旧路径）",
-                "请求身份改成与社区维护的 garth 0.8.0 一致：只发 iOS 的 User-Agent（GCM-iOS-5.22.1.4），不再附带任何 X-Garmin-* 设备头。1.14.8 补的那整套设备头一条 403 也没挡下来，说明被拦的是指纹本身",
-                "换令牌的 audience 改回不带季度后缀的 GARMIN_CONNECT_MOBILE_ANDROID_DI，并校验换到的令牌是否带 CONNECT_READ：缺这条权限就继续换下一个，不会把「能验签、不能读数据」的令牌存进本地",
-                "睡眠接口 403 时自动改用 /sleep-service/sleep/dailySleepData，不再整段失败",
-                "同步诊断新增「令牌权限」一行，可直接看出 403 是令牌没权限还是接口变了",
+                "搬运、回填、导入写回全部改成前台服务：通知栏常驻一条进度，锁屏、切到别的应用都会继续跑",
+                "修的是「搬到一半停在某一格再也不动」——之前只有屏幕常亮锁，锁屏约半小时后系统进入 Doze 会直接掐断网络，请求根本发不出去",
+                "通知里带「停止」按钮：点了立刻收工，已搬的天数全部保留，再点一次接着搬",
+                "通知显示「已处理 / 总数」进度条，一年这种长跨度不用再盯着屏幕干等",
+                "只在点「开始」的那一刻请求通知权限，不在一打开应用时就弹；拒绝了任务照跑，只是看不到进度、也没法从通知里停",
+                "任务结束会把通知换成可滑掉的结果提示，人切走了也能知道搬完没有、为什么停",
             ),
         ),
     )

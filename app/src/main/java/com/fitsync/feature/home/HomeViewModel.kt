@@ -293,14 +293,22 @@ class HomeViewModel @Inject constructor(
     /** 回填过去一年的日汇总/睡眠 + 全量活动 */
     fun backfillHistory() = syncCoordinator.backfillHistory()
 
-    fun importData(bytes: ByteArray, fileName: String) =
-        syncCoordinator.importData(bytes, fileName)
+    fun importData(bytes: ByteArray, fileName: String, targetAccountId: Long? = null) =
+        syncCoordinator.importData(bytes, fileName, targetAccountId)
 
     fun importFailed(reason: String) = syncCoordinator.importFailed(reason)
 
     fun copyActivitiesToOtherAccount() = syncCoordinator.copyActivitiesToOtherAccount()
 
-    fun copyHealthToOtherAccount() = syncCoordinator.copyHealthToOtherAccount()
+    val copyHealthDays: StateFlow<Int> = syncCoordinator.copyHealthDays
+    fun setCopyHealthDays(days: Int) = syncCoordinator.setCopyHealthDays(days)
+
+    /** 搬运风险说明是否已勾选「不再提示」 */
+    val copyRiskAcknowledged: StateFlow<Boolean> = syncCoordinator.copyRiskAcknowledged
+    fun acknowledgeCopyRisk() = syncCoordinator.acknowledgeCopyRisk()
+
+    fun copyHealthToOtherAccount() =
+        syncCoordinator.copyHealthToOtherAccount(syncCoordinator.copyHealthDays.value)
 
     fun setPrimaryAccount(accountId: Long) = primaryAccountStore.setPrimary(accountId)
 

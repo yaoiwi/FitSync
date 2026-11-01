@@ -171,6 +171,10 @@ interface ActivityDao {
     @Query("SELECT * FROM activities WHERE account_id = :a AND external_id = :ext LIMIT 1")
     suspend fun byExternalId(a: Long, ext: String): ActivityEntity?
 
+    /** 导入合并用：一次取回这批活动的旧行 */
+    @Query("SELECT * FROM activities WHERE account_id = :a AND external_id IN (:ids)")
+    suspend fun byExternalIds(a: Long, ids: List<String>): List<ActivityEntity>
+
     @Query("SELECT COUNT(*) FROM activities WHERE account_id = :a")
     suspend fun countByAccount(a: Long): Int
 
@@ -255,6 +259,10 @@ interface DailySummaryDao {
     @Query("SELECT * FROM daily_summaries WHERE account_id = :a AND date = :date")
     suspend fun byDate(a: Long, date: String): DailySummaryEntity?
 
+    /** 导入合并用：一次取回这批日期的旧行，避免逐条查库 */
+    @Query("SELECT * FROM daily_summaries WHERE account_id = :a AND date IN (:dates)")
+    suspend fun byDates(a: Long, dates: List<String>): List<DailySummaryEntity>
+
     @Query(
         """SELECT * FROM daily_summaries
            WHERE steps > 0 OR distance_m > 0 OR calories_active > 0 OR resting_hr > 0
@@ -288,6 +296,10 @@ interface SleepSessionDao {
     /** 同步时定位同一条睡眠，避免 REPLACE 换 id 后旧分期变成孤儿 */
     @Query("SELECT * FROM sleep_sessions WHERE account_id = :a AND external_id = :ext LIMIT 1")
     suspend fun byExternalId(a: Long, ext: String): SleepSessionEntity?
+
+    /** 导入合并用：一次取回这批睡眠的旧行 */
+    @Query("SELECT * FROM sleep_sessions WHERE account_id = :a AND external_id IN (:ids)")
+    suspend fun byExternalIds(a: Long, ids: List<String>): List<SleepSessionEntity>
 
     @Query(
         "SELECT * FROM sleep_sessions WHERE total_sleep_min > 0 ORDER BY end_time_ms DESC LIMIT 1"
