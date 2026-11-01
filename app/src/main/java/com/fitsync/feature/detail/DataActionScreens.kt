@@ -14,9 +14,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,10 +40,13 @@ import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixSegmentedControl
 import com.fitsync.ui.components.MiuixTextButton
+import com.fitsync.ui.components.MiuixActionDialog
+import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.regionLabel
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
+import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
 import kotlinx.coroutines.launch
@@ -371,7 +371,7 @@ fun CopyHealthScreen(
                 MiuixDivider(startIndent = 18)
                 BulletLine("搬完要在目标账号下同步一次，首页才看得到")
                 MiuixDivider(startIndent = 18)
-                BulletLine("搬运期间通知栏会显示进度，随时可以点「停止」；锁屏或用别的应用也会继续跑")
+                BulletLine("搬运期间通知栏显示进度，可随时点「停止」；锁屏也会继续跑，嫌慢可到「设置 → 同步 → 后台加速」放行")
             }
         }
         item {
@@ -432,58 +432,59 @@ fun CopyHealthScreen(
 
     if (showRisk) {
         val longSpan = copyDays >= 365
-        AlertDialog(
-            onDismissRequest = { showRisk = false },
-            title = { Text(if (longSpan && riskAcknowledged) "这次会跑很久" else "开始前请了解") },
-            text = {
-                Column {
-                    if (!riskAcknowledged) {
-                        RiskLine("① 和日常同步共用 Garmin 的请求配额：短时间内反复触发限流，账号会被锁 48 小时，期间所有同步都停")
-                        RiskLine("② 目标账号已有同一天的文件会跳过，不覆盖、不删除原有数据")
-                        RiskLine("③ 目标账号没绑定并激活 wellness 设备时，Garmin 会直接拒绝（419）")
-                        RiskLine("④ 不可撤销：搬过去的数据只能在 Garmin Connect 网页端逐条删除")
-                    }
-                    if (longSpan) {
-                        Text(
-                            text = "本次约 55 分钟、约 1100 个请求，分 4 片自动续跑。" +
-                                "开始后通知栏会有一条常驻进度，可以锁屏、切到别的应用，只要通知还在就还在搬；" +
-                                "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，再点一次接着搬。",
-                            fontSize = 12.sp,
-                            lineHeight = 18.sp,
-                            color = MiuixSummary,
-                        )
-                    }
-                    if (!riskAcknowledged) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(top = 8.dp),
-                        ) {
-                            Checkbox(
-                                checked = dontAskAgain,
-                                onCheckedChange = { dontAskAgain = it },
-                            )
+        MiuixActionDialog(
+            title = if (longSpan && riskAcknowledged) "这次会跑很久" else "开始前请了解",
+            confirmText = "我已了解，开始",
+            onConfirm = {
+                showRisk = false
+                if (dontAskAgain) viewModel.acknowledgeCopyRisk()
+                ensureNotification { viewModel.copyHealthToOtherAccount() }
+            },
+            onDismiss = { showRisk = false },
+        ) {
+            Column {
+                if (!riskAcknowledged) {
+                    RiskLine("① 和日常同步共用 Garmin 的请求配额：短时间内反复触发限流，账号会被锁 48 小时，期间所有同步都停")
+                    RiskLine("② 目标账号已有同一天的文件会跳过，不覆盖、不删除原有数据")
+                    RiskLine("③ 目标账号没绑定并激活 wellness 设备时，Garmin 会直接拒绝（419）")
+                    RiskLine("④ 不可撤销：搬过去的数据只能在 Garmin Connect 网页端逐条删除")
+                }
+                if (longSpan) {
+                    Text(
+                        text = "本次约 55 分钟、约 1100 个请求，分 4 片自动续跑。" +
+                            "开始后通知栏会有一条常驻进度，可以锁屏、切到别的应用，只要通知还在就还在搬；" +
+                            "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，再点一次接着搬。",
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = MiuixSummary,
+                    )
+                }
+                if (!riskAcknowledged) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MiuixGroupBg)
+                            .padding(start = 14.dp, end = 12.dp, top = 10.dp, bottom = 10.dp),
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("以后不再提示这几条", fontSize = 14.sp, color = MiuiText1)
                             Text(
-                                text = "以后不再提示这几条（长跨度仍会提醒耗时）",
-                                fontSize = 12.sp,
+                                text = "长跨度仍会提醒耗时",
+                                fontSize = 11.sp,
                                 color = MiuixSummary,
                             )
                         }
+                        MiuixSwitch(
+                            checked = dontAskAgain,
+                            onCheckedChange = { dontAskAgain = it },
+                        )
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRisk = false
-                        if (dontAskAgain) viewModel.acknowledgeCopyRisk()
-                        viewModel.copyHealthToOtherAccount()
-                    },
-                ) { Text("我已了解，开始") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRisk = false }) { Text("取消") }
-            },
-        )
+            }
+        }
     }
 }
 

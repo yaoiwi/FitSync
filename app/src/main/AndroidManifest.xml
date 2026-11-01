@@ -19,6 +19,11 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Android 13 起通知要用户授权；没有也只是看不到进度，服务本身照跑 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- 长任务期间持有 Wi-Fi 高性能锁：锁屏后 Wi-Fi 会切省电模式，RTT 涨 10 倍，搬运明显变慢 -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- 「后台加速」入口：跳系统的「不限制电池」确认框 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:name=".FitSyncApp"

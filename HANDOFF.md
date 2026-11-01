@@ -1185,3 +1185,39 @@ Android 14 起 `dataSync` 必须单独声明 `FOREGROUND_SERVICE_DATA_SYNC`，�
   若以后加「全量 730 天 + 长时间限流重试」，需要处理 `Service.onTimeout()`。
 - 没做 `WorkManager` 长任务（`setForeground`）替代：搬运需要精确的「停顿—重试」节奏与
   实时进度，WorkManager 的调度粒度不合适。
+
+## 二十六、同步可滚动 / Miuix 组件统一 / 后台提速（1.14.14）
+
+### 1. 同步时列表滚不动
+
+`HyperPage` 里 `PullToRefresh(isRefreshing = 同步中)`。控件进入 refreshing 态后：
+把刷新头固定在顶部、在 nestedScroll 里参与位移分配 → 同步期间列表拖不动；
+头部那个无限旋转动画还会让整页玻璃（`progressiveTextureBlur`）每帧重新采样，掉帧。
+
+改法：`isRefreshing` **固定传 false**，刷新中的状态用标题栏下沿一条 2dp 静态细线表示
+（不动画 → 不重绘 → 不抢手势）。下拉手势仍然触发 `onRefresh`，只是松手后头部回弹。
+代价是失去「刷新头停住」的官方动画，换来同步时能正常浏览数据。
+
+### 2. 日志页与搬运提醒改用 Miuix
+
+- `MiuixDialogs.kt` 新增 `MiuixActionDialog`（`DialogShell` 26dp 圆角 + 自定义正文 + 底部文字按钮），
+  搬运确认弹窗从 Material3 `AlertDialog` 换过来，「以后不再提示」用 `MiuixSwitch` 包成一行说明块；
+- `SyncLogsScreen` 的 `LogRow` 从自绘「圆点 + 两行」改成 `MiuixRow`：标题=时间，
+  summary=账号 · 条数 / 错误，trailing=耗时 + 成功/失败，内边距与设置页一致。
+
+### 3. 后台跑得慢
+
+三个原因叠在一起：
+
+1. **Wi-Fi 省电**：锁屏后 Wi-Fi 进 PS-Poll，RTT 从几十毫秒涨到几百毫秒。
+   `withCpuAwake` 里加 `WifiLock`（API 29+ 用 `WIFI_MODE_FULL_LOW_LATENCY`，
+   以下用 `WIFI_MODE_FULL_HIGH_PERF`），随 WakeLock 一起释放。
+2. **待机桶限制**：设置页新增「后台加速」，跳
+   `ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 让用户放行；`ON_RESUME` 时重读状态。
+3. **通知刷太密**：`updateLongTaskService` 改为每 5% 或每 3 秒推一次。
+   365 天逐天 `startService` + `notify` 跨进程调用太频繁，系统会限流，进度反而一顿一顿。
+
+新增权限：`ACCESS_WIFI_STATE`、`CHANGE_WIFI_STATE`、`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`。
+
+> 注意：`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 在 Google Play 上属于敏感权限（需说明用途）。
+> 本项目自签分发不受影响；若以后上架，改跳 `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` 列表页即可。

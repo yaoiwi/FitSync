@@ -71,6 +71,10 @@ class SyncCoordinator @Inject constructor(
      */
     private var longTaskJob: Job? = null
 
+    /** 通知进度节流用：上次推送的时刻与天数 */
+    private var lastProgressNotifyMs = 0L
+    private var lastProgressNotifyDone = -1
+
     fun isLongTaskRunning(): Boolean = longTaskJob?.isActive == true
 
     /**
@@ -564,6 +568,15 @@ class SyncCoordinator @Inject constructor(
     }
 
     private fun updateLongTaskService(title: String, text: String, done: Int?, total: Int?) {
+        // 通知是跨进程调用，365 天逐天刷新既费电，也会被系统限流，进度反而看着一顿一顿的。
+        // 每 5% 或每 3 秒推一次就够顺滑了。
+        if (done != null && total != null) {
+            val step = maxOf(1, total / 20)
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (done - lastProgressNotifyDone < step && now - lastProgressNotifyMs < 3_000L) return
+            lastProgressNotifyMs = now
+            lastProgressNotifyDone = done
+        }
         runCatching { LongTaskService.update(context, title, text, done, total) }
     }
 
@@ -584,10 +597,28 @@ class SyncCoordinator @Inject constructor(
             android.os.PowerManager.PARTIAL_WAKE_LOCK,
             "FitSync:longTask",
         )?.apply { runCatching { acquire(WAKE_LOCK_TIMEOUT_MS) } }
+        // 锁屏后 Wi-Fi 会切到省电模式（PS-Poll），往返延迟从几十毫秒涨到几百毫秒；
+        // 搬运一天 3 个请求，累起来就是「后台明显比前台慢」。
+        // 高性能锁只在长任务期间持有，屏幕亮着时系统本来就不会省电，影响可以忽略。
+        val wifiLock = runCatching {
+            val wifi = context.applicationContext
+                .getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager
+            val mode = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wifi?.createWifiLock(mode, "FitSync:longTask")?.apply {
+                setReferenceCounted(false)
+                acquire()
+            }
+        }.getOrNull()
         return try {
             block()
         } finally {
             runCatching { if (lock?.isHeld == true) lock.release() }
+            runCatching { if (wifiLock?.isHeld == true) wifiLock.release() }
         }
     }
 

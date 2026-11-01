@@ -233,6 +233,61 @@ fun MiuixConfirmDialog(
     )
 }
 
+/**
+ * 带自定义正文的操作对话框。
+ *
+ * 搬运健康数据这类「几条风险 + 一个不再提示开关」的确认，塞不进
+ * [MiuixConfirmDialog] 的单段 message；但也不该退回 Material3 的 AlertDialog——
+ * 它的圆角、内边距和按钮排布跟 HyperOS 差得远，一弹出来就出戏。
+ */
+@Composable
+fun MiuixActionDialog(
+    title: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+    confirmText: String = "确定",
+    cancelText: String = "取消",
+    confirmEnabled: Boolean = true,
+    content: @Composable () -> Unit,
+) {
+    val tick = rememberTick()
+    DialogShell(
+        title = title,
+        onDismiss = onDismiss,
+        content = {
+            Spacer(Modifier.height(12.dp))
+            content()
+        },
+        buttons = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                DialogTextAction(
+                    text = cancelText,
+                    color = MiuixSummary,
+                    onClick = {
+                        tick()
+                        onDismiss()
+                    },
+                )
+                Spacer(Modifier.width(4.dp))
+                DialogTextAction(
+                    text = confirmText,
+                    color = if (confirmEnabled) MiuixPrimary else MiuixSummary,
+                    emphasized = true,
+                    onClick = {
+                        if (!confirmEnabled) return@DialogTextAction
+                        tick()
+                        onConfirm()
+                    },
+                )
+            }
+        },
+    )
+}
+
 @Composable
 private fun DialogTextAction(
     text: String,

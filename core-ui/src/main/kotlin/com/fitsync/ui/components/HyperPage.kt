@@ -5,15 +5,20 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import com.fitsync.ui.theme.MiuixPrimary
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -108,19 +113,37 @@ fun HyperPage(
                 )
             }
         }
-        if (onRefresh != null) {
-            // 官方 Miuix 下拉刷新：与顶部折叠动画共用 scrollBehavior
-            PullToRefresh(
-                isRefreshing = isRefreshing,
-                onRefresh = onRefresh,
-                modifier = Modifier.fillMaxSize(),
-                topAppBarScrollBehavior = scrollBehavior,
-                contentPadding = PaddingValues(top = padding.calculateTopPadding()),
-                refreshTexts = listOf("", "", "", ""),
-                content = list,
-            )
-        } else {
-            list()
+        Box(modifier = Modifier.fillMaxSize()) {
+            if (onRefresh != null) {
+                // 官方 Miuix 下拉刷新：与顶部折叠动画共用 scrollBehavior。
+                //
+                // isRefreshing **刻意传 false**：控件一旦进入 refreshing 态，就会把刷新头
+                // 固定在顶部、并在 nestedScroll 里参与位移分配，同步期间列表滚不动；
+                // 头部那个无限旋转动画还会让整页玻璃每帧重采样，掉帧很明显。
+                // 刷新中的状态改用下面那条静态细线表示——不动画、不抢手势。
+                PullToRefresh(
+                    isRefreshing = false,
+                    onRefresh = onRefresh,
+                    modifier = Modifier.fillMaxSize(),
+                    topAppBarScrollBehavior = scrollBehavior,
+                    contentPadding = PaddingValues(top = padding.calculateTopPadding()),
+                    refreshTexts = listOf("", "", "", ""),
+                    content = list,
+                )
+            } else {
+                list()
+            }
+            if (isRefreshing) {
+                // 同步中：顶栏下沿一条静态细线。不做位移动画，列表照常可以滑动
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = padding.calculateTopPadding())
+                        .fillMaxWidth()
+                        .height(2.dp)
+                        .background(MiuixPrimary.copy(alpha = 0.55f)),
+                )
+            }
         }
     }
 }

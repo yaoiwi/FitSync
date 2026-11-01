@@ -39,6 +39,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -67,6 +71,7 @@ import com.fitsync.copyToClipboard
 import com.fitsync.data.network.GarminDiagnostics
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
+import com.fitsync.permission.BatteryOptimization
 import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
@@ -1033,6 +1038,20 @@ private fun SettingsTab(
     val backfillIndex = backfillValues.indexOf(backfillDays).let { if (it < 0) 2 else it }
     // 回填同样是长任务：先要通知权限，再交给前台服务跑
     val ensureNotification = rememberNotificationPermissionGate()
+    // 电池优化白名单：跳系统设置回来要重新读一次，否则开关状态是旧的
+    var batteryExempt by remember {
+        mutableStateOf(BatteryOptimization.isIgnoring(settingsContext))
+    }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                batteryExempt = BatteryOptimization.isIgnoring(settingsContext)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     // 冷却倒计时：每秒刷新一次，值没变时 Compose 不会重组，开销可以忽略
     var cooldownMs by remember { mutableStateOf(0L) }
@@ -1157,6 +1176,26 @@ private fun SettingsTab(
                                 Haptics.perform(settingsContext, HapticFeedback.Confirm)
                             },
                         )
+                    },
+                )
+                MiuixDivider()
+                MiuixRow(
+                    title = "后台加速",
+                    summary = if (batteryExempt) {
+                        "已允许后台不受电池限制，长任务不会被降速"
+                    } else {
+                        "允许后搬运、回填在后台不会被系统降速或冻结"
+                    },
+                    showArrow = !batteryExempt,
+                    trailing = {
+                        if (batteryExempt) {
+                            Text(text = "已开启", fontSize = 12.sp, color = MiuixPrimary)
+                        }
+                    },
+                    onClick = if (batteryExempt) {
+                        null
+                    } else {
+                        ({ BatteryOptimization.requestIgnore(settingsContext) })
                     },
                 )
                 MiuixDivider()

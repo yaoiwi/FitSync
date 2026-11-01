@@ -16,8 +16,8 @@ android {
         applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 83
-        versionName = "1.14.13"
+        versionCode = 84
+        versionName = "1.14.14"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

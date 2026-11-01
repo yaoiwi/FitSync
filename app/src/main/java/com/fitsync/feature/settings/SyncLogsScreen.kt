@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.data.db.AccountEntity
@@ -28,6 +29,7 @@ import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
 import com.fitsync.ui.components.MiuixDivider
+import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.MiuiText1
@@ -111,56 +113,40 @@ private fun LogRow(
     accountName: String,
 ) {
     val ok = log.status == "success"
-    Row(
-        modifier = Modifier.padding(horizontal = 18.dp, vertical = 13.dp),
-        verticalAlignment = Alignment.Top,
-    ) {
-        Box(
-            modifier = Modifier
-                .padding(top = 6.dp)
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(if (ok) Color(0xFF34C759) else MiuixError)
-        )
-        Spacer(Modifier.width(12.dp))
-        Column(modifier = Modifier.weight(1f)) {
+    // 用统一的 MiuixRow 而不是自绘 Row：内边距、行高、点按反馈都和设置页一致，
+    // HyperOS 的列表里不会出现「这一行比别处矮两像素」的错位感
+    MiuixRow(
+        title = formatTime(log.tsMs),
+        summary = buildString {
+            append(accountName)
+            if (ok) {
+                append(" · ${log.records} 条")
+            } else if (log.errorMsg.isNotBlank()) {
+                append(" · ${log.errorMsg}")
+            }
+        },
+        trailing = {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = formatTime(log.tsMs),
-                    fontSize = 15.sp,
-                    color = MiuiText1,
-                )
-                Spacer(Modifier.width(8.dp))
+                if (log.durationMs > 0) {
+                    Text(
+                        text = "${log.durationMs / 1000} s",
+                        fontSize = 12.sp,
+                        color = MiuixSummary,
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = if (ok) "成功" else "失败",
                     fontSize = 12.sp,
-                    color = if (ok) Color(0xFF34C759) else MiuixError,
+                    fontWeight = FontWeight.Medium,
+                    color = if (ok) LogOk else MiuixError,
                 )
             }
-            Text(
-                text = buildString {
-                    append(accountName)
-                    if (ok) {
-                        append(" · ${log.records} 条")
-                    } else if (log.errorMsg.isNotBlank()) {
-                        append(" · ${log.errorMsg}")
-                    }
-                },
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                color = MiuixSummary,
-            )
-        }
-        if (log.durationMs > 0) {
-            Text(
-                text = "${log.durationMs / 1000} s",
-                fontSize = 12.sp,
-                color = MiuixSummary,
-                modifier = Modifier.padding(top = 2.dp),
-            )
-        }
-    }
+        },
+    )
 }
+
+private val LogOk = Color(0xFF34C759)
 
 private fun accountName(
     accountId: Long,
