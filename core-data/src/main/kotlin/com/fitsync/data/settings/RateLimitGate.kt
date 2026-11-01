@@ -11,25 +11,38 @@ import javax.inject.Singleton
 /**
  * 429 冷却倍率表。
  *
- * Garmin 的限流不是一个固定窗口：连续触发会让窗口变长。实测的规律是
- * 「10 分钟 → 半小时 → 1 小时」逐级抬升，所以这里做指数式退避，
- * 而不是每次都让用户等 10 分钟再撞一次。
+ * Garmin 的限流分两级，社区（python-garminconnect / garmin-grafana 的排障文档）
+ * 反复记录过同一个规律：
+ *
+ * - **单请求限流**：一次 429 只影响当前这一点，`Retry-After` 通常 30–120 秒；
+ * - **账号级锁定**：**10 分钟内第二次 429** 就会把整个账号锁 48–72 小时，
+ *   期间**所有**接口都返回 429，`Retry-After` 也不再可信。
+ *
+ * 所以第一档给 30 分钟（远大于 10 分钟，保证不会连撞两次），
+ * 后面按账号锁定的窗口逐级抬到 48 小时。这个表的目的是「宁可停久一点，
+ * 也不要把账号推进 48 小时的黑屋」。
  */
 object RateLimitBackoff {
 
     /** 连击 1、2、3、4 次以上对应的冷却时长 */
     private val LADDER_MS = longArrayOf(
-        10 * 60_000L,
-        30 * 60_000L,
-        60 * 60_000L,
-        3 * 60 * 60_000L,
+        30 * 60_000L,           // 第 1 次：30 分钟
+        6 * 60 * 60_000L,       // 第 2 次：6 小时
+        24 * 60 * 60_000L,      // 第 3 次：24 小时
+        48 * 60 * 60_000L,      // 第 4 次起：48 小时（账号锁定窗口）
     )
 
-    /** 超过这个时间没再撞限流，就当作账号已恢复，连击计数清零 */
-    const val RESET_AFTER_MS = 6 * 60 * 60_000L
+    /**
+     * 超过这个时间没再撞限流，就当作账号已恢复，连击计数从 1 算起。
+     *
+     * 必须大于最长一档冷却（48 小时）：否则 48 小时冷却刚到点又撞一次，
+     * 计数会被判成「已恢复」退回到 30 分钟，反而比实际需要的等待更短，
+     * 用户又会连续试探，把刚解开的账号重新锁回去。
+     */
+    const val RESET_AFTER_MS = 7 * 24 * 60 * 60_000L
 
-    /** 最长冷却：再久就不该让用户干等了，届时应改为提示检查账号状态 */
-    const val MAX_MS = 6 * 60 * 60_000L
+    /** 最长冷却：服务端给出更长的 `Retry-After` 时也不超过 72 小时 */
+    const val MAX_MS = 72 * 60 * 60_000L
 
     /**
      * 本次应冷却多久。
@@ -117,23 +130,32 @@ class RateLimitGate @Inject constructor(
 
     /**
      * 给界面用的剩余时间文案，例如 `12 分钟（21:58 后自动恢复）`。
-     * 不足 1 分钟时显示秒，避免「还有 0 分钟」这种看不懂的提示。
+     *
+     * 超过一天时必须带上日期：账号锁定是 48 小时级别，只写 `23:58` 会让人
+     * 以为今晚就能恢复，于是到点继续点，又把锁定续上。
      */
     fun waitLabel(now: Long = System.currentTimeMillis()): String {
         val left = remainingMs(now)
         if (left <= 0L) return "已恢复"
         val until = now + left
         val clock = SimpleDateFormat("HH:mm", Locale.CHINA).format(Date(until))
+        val day = SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(Date(until))
         val human = when {
             left < 60_000L -> "${(left / 1000).coerceAtLeast(1)} 秒"
             left < 60 * 60_000L -> "${(left / 60_000L).coerceAtLeast(1)} 分钟"
-            else -> {
+            left < 24 * 60 * 60_000L -> {
                 val hours = left / (60 * 60_000L)
                 val minutes = (left % (60 * 60_000L)) / 60_000L
                 if (minutes > 0) "$hours 小时 $minutes 分" else "$hours 小时"
             }
+            else -> {
+                val days = left / (24 * 60 * 60_000L)
+                val hours = (left % (24 * 60 * 60_000L)) / (60 * 60_000L)
+                if (hours > 0) "$days 天 $hours 小时" else "$days 天"
+            }
         }
-        return "$human（$clock 后自动恢复）"
+        return if (left < 24 * 60 * 60_000L) "$human（$clock 后自动恢复）"
+        else "$human（$day 后自动恢复）"
     }
 
     private companion object {

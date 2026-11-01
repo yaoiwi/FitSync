@@ -31,9 +31,11 @@ data class SessionInfo(
     val refreshToken: String = "",
     /** access token 过期时间（epoch ms），0 表示未知 */
     val expiresAtMs: Long = 0L,
-    /** OAuth1 token，用来刷新 access token（长期有效） */
+    /** OAuth1 token，用来刷新 access token（长期有效）；新路登录时为空 */
     val oauth1Token: String = "",
     val oauth1Secret: String = "",
+    /** 签发 DI 令牌用的 client_id（续期要原样带回） */
+    val diClientId: String = "",
 ) {
     val hasOauthToken: Boolean get() = accessToken.isNotBlank()
 }
@@ -87,7 +89,7 @@ sealed class GarminNetworkException(message: String, cause: Throwable? = null) :
     class BadCredentials(cause: Throwable? = null) :
         GarminNetworkException("账号或密码错误", cause)
 
-    /** 账号被风控 / 锁定 */
+    /** 账号被限流（HTTP 429）：可以自愈，按冷却阶梯等一段时间 */
     class RiskBlocked(
         cause: Throwable? = null,
         /** 服务端 `Retry-After` 换算出的毫秒数，没有就是 null */
@@ -95,6 +97,30 @@ sealed class GarminNetworkException(message: String, cause: Throwable? = null) :
     ) :
         GarminNetworkException(
             "Garmin 正在限流（HTTP 429）：等 5–10 分钟再试，期间别连续点同步",
+            cause,
+        )
+
+    /**
+     * 服务端明确拒绝（HTTP 403）：**不是**限流，等多久都不会自己好。
+     *
+     * 以前 403 和 429 都归到 [RiskBlocked]，结果是一个「请求本身不被接受」
+     * （缺头、出口 IP 被拦、令牌权限不足）的 403 也被当成限流，按阶梯一路
+     * 锁到 48 小时，而且到点再试仍然是 403——表现出来就是「永远显示账号限制」。
+     * 单独成一类之后，上层只提示原因，不再进入冷却。
+     */
+    class Forbidden(
+        /** 触发 403 的接口，例如 `usersummary` / `socialProfile` */
+        val endpoint: String = "Connect API",
+        /** Garmin 的原始响应（截断），用于区分「令牌被作废」和「网络被拦」 */
+        val detail: String = "",
+        cause: Throwable? = null,
+    ) :
+        GarminNetworkException(
+            buildString {
+                append("Garmin 拒绝了请求（HTTP 403，").append(endpoint).append("），这不是限流")
+                if (detail.isNotBlank()) append("。Garmin 原话：").append(detail)
+                append("。重新登录后仍然出现，就是出口网络被拦，换个网络再试")
+            },
             cause,
         )
 

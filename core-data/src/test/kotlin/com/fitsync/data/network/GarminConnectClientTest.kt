@@ -6,7 +6,9 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -21,6 +23,7 @@ class GarminConnectClientTest {
 
     @Before
     fun setUp() {
+        GarminDiagnostics.clear()
         server = MockWebServer()
         server.start()
         client = GarminConnectClient(OkHttpClient()).apply {
@@ -52,8 +55,13 @@ class GarminConnectClientTest {
         assertEquals(96, s.spo2Avg)
         val req = server.takeRequest()
         assertEquals("Bearer AT", req.getHeader("Authorization"))
-        assertTrue(req.path!!.contains("/api/usersummary-service/usersummary/daily/runner42"))
+        // 路径里不能带账号：新网关会把它判成越权，回 message 为 null 的 403
+        assertTrue("应请求无用户名的日汇总：${req.path}", req.path!!.startsWith("/api/usersummary-service/usersummary/daily/?"))
+        assertFalse("URL 里不该出现账号：${req.path}", req.path!!.contains("runner42"))
         assertTrue(req.path!!.contains("calendarDate=2026-10-17"))
+        // 身份头只剩 UA：多带 X-Garmin-* 反而会被判伪造
+        assertEquals("GCM-iOS-5.22.1.4", req.getHeader("User-Agent"))
+        assertNull("不该再带 X-Garmin-User-Agent", req.getHeader("X-Garmin-User-Agent"))
     }
 
     @Test
@@ -116,6 +124,46 @@ class GarminConnectClientTest {
             )
         )
         assertNull(client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-18"))
+    }
+
+    @Test
+    fun `日汇总_无用户名路径404时回退旧路径`() {
+        // 中国区早期账号的老网关不认 /daily/?calendarDate=，必须能退回带账号的形式，
+        // 否则换端点会把原本能用的账号弄成「首页空了」。
+        server.enqueue(MockResponse().setResponseCode(404))
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"calendarDate":"2026-10-19","totalSteps":4321}""")
+        )
+
+        val s = client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-19")!!
+
+        assertEquals(4321, s.steps)
+        assertFalse(server.takeRequest().path!!.contains("runner42"))
+        assertTrue(server.takeRequest().path!!.contains("/daily/runner42"))
+    }
+
+    @Test
+    fun `睡眠_旧端点403时改用新端点`() {
+        // 带账号的 old 路径被新网关判越权；改用 /sleep-service/sleep/dailySleepData
+        server.enqueue(
+            MockResponse().setResponseCode(403)
+                .setBody("""{"message":null,"error":"ForbiddenException"}""")
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"dailySleepDTO":{"calendarDate":"2026-10-19","sleepTimeSeconds":7200,
+                   "awakeSleepSeconds":600,"sleepStartTimestampGMT":1760812800000,
+                   "sleepEndTimestampGMT":1760820600000,"sleepScores":{"overall":{"value":70}}}}"""
+            )
+        )
+
+        val s = client.fetchSleep(AccountRegion.CN, "AT", "runner42", "2026-10-19")!!
+
+        assertEquals(120, s.totalSleepMin)
+        assertEquals(70, s.sleepScore)
+        val retried = server.takeRequest().let { server.takeRequest() }
+        assertEquals("/api/sleep-service/sleep/dailySleepData?date=2026-10-19", retried.path)
     }
 
     @Test
@@ -342,5 +390,158 @@ class GarminConnectClientTest {
         assertTrue("轨迹应含四种尝试：${outcome.trace}", outcome.trace.contains("Bearer/API"))
         assertTrue("轨迹应含 OAuth1：${outcome.trace}", outcome.trace.contains("OAuth1/API"))
         assertTrue("文案应带轨迹：${outcome.errorText}", outcome.errorText.contains("尝试："))
+    }
+
+    // ============================ 403 与 429 必须分开 ============================
+    //
+    // 403 是「请求被拒绝」，等多久都不会自己好；429 才是限流。
+    // 两者混在一起时，一个 403 会被当成限流一路锁到 48 小时，
+    // 用户看到的就是「永远显示账号限制、同步不了」。
+
+    @Test
+    fun `403_直接判 Forbidden_只发一次请求`() {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("Access is Denied"))
+
+        val error = assertThrows(GarminNetworkException.Forbidden::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+
+        assertTrue("文案应说明是 403：${error.message}", error.message!!.contains("403"))
+        assertTrue("文案应说明不是限流：${error.message}", error.message!!.contains("不是限流"))
+        // 不再「换 UA 再试一次」：试过浏览器 UA、试过 Android 设备头，都是同样的 403
+        assertEquals("403 不应重复请求", 1, server.requestCount)
+        val req = server.takeRequest()
+        assertTrue("必须始终用 iOS 指纹：${req.getHeader("User-Agent")}",
+            req.getHeader("User-Agent")!!.startsWith("GCM-iOS"))
+    }
+
+    @Test
+    fun `请求身份只有iOS_UA_不带设备头`() {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"calendarDate":"2026-10-17","totalSteps":1}"""
+            )
+        )
+
+        client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+
+        val req = server.takeRequest()
+        assertEquals("GCM-iOS-5.22.1.4", req.getHeader("User-Agent"))
+        // 1.14.8 补了一整套 X-Garmin-*，403 一条没少；garth 0.8.0 只发 UA 就能读数据，
+        // 说明这批头不是通行证，多带只会被当成伪造
+        assertNull("不该带 X-Garmin-User-Agent", req.getHeader("X-Garmin-User-Agent"))
+        assertNull("不该带 X-Garmin-Paired-App-Version", req.getHeader("X-Garmin-Paired-App-Version"))
+        assertNull("不该带 X-Garmin-Client-Platform", req.getHeader("X-Garmin-Client-Platform"))
+        // NK / DI-Backend 是网页 Cookie 模式的头，配 Bearer 会 500，绝不能带
+        assertNull("DI 模式不应带 NK", req.getHeader("NK"))
+        assertNull("DI 模式不应带 DI-Backend", req.getHeader("DI-Backend"))
+    }
+
+    @Test
+    fun `302 跳登录页_当作令牌失效且不跟随`() {
+        server.enqueue(
+            MockResponse().setResponseCode(302)
+                .setHeader("Location", "https://sso.garmin.cn/sso/signin")
+        )
+
+        assertThrows(GarminNetworkException.Unauthorized::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+
+        // 跟着跳过去会在跨域时丢掉 Authorization，最后变成一个看不出原因的 403，
+        // 续期逻辑永远等不到 401 —— 这正是「一直 403」的成因
+        assertEquals("不应跟随重定向", 1, server.requestCount)
+    }
+
+    @Test
+    fun `403_保留 Garmin 原话并记入诊断`() {
+        val body = """{"message":"HTTP 403 Forbidden","error":"ForbiddenException"}"""
+        server.enqueue(MockResponse().setResponseCode(403).setBody(body))
+
+        val error = assertThrows(GarminNetworkException.Forbidden::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+        assertTrue(
+            "文案应带 Garmin 原话：${error.message}",
+            error.message!!.contains("ForbiddenException"),
+        )
+
+        val entry = GarminDiagnostics.latest()!!
+        assertEquals(403, entry.code)
+        assertTrue("应能看出请求确实带了令牌（长度 ${entry.tokenLength}）", entry.tokenLength > 0)
+    }
+
+    @Test
+    fun `连续失败也保持同一身份_不轮换 UA`() {
+        repeat(2) {
+            server.enqueue(MockResponse().setResponseCode(403).setBody("Access is Denied"))
+        }
+
+        repeat(2) {
+            runCatching {
+                client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+            }
+        }
+
+        repeat(2) {
+            val req = server.takeRequest()
+            assertEquals(
+                "第 ${it + 1} 次 UA 被换掉了",
+                "GCM-iOS-5.22.1.4",
+                req.getHeader("User-Agent"),
+            )
+            assertNull("第 ${it + 1} 次多带了设备头", req.getHeader("X-Garmin-User-Agent"))
+        }
+    }
+
+    @Test
+    fun `429_带 cf-ray 也按限流处理_不换身份重试`() {
+        server.enqueue(
+            MockResponse().setResponseCode(429).setHeader("cf-ray", "8a1b2c3d4e5f-SJC")
+        )
+
+        assertThrows(GarminNetworkException.RiskBlocked::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+        // 连续硬撞只会把锁定推得更久，冷却交给上层
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test
+    fun `429_判为限流并带回 Retry-After`() {
+        server.enqueue(
+            MockResponse().setResponseCode(429).setHeader("Retry-After", "120")
+        )
+
+        val error = assertThrows(GarminNetworkException.RiskBlocked::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+
+        assertEquals(120_000L, error.retryAfterMs)
+    }
+
+    @Test
+    fun `429_没有 Retry-After 时仍判为限流`() {
+        server.enqueue(MockResponse().setResponseCode(429))
+
+        val error = assertThrows(GarminNetworkException.RiskBlocked::class.java) {
+            client.fetchDailySummary(AccountRegion.CN, "AT", "runner42", "2026-10-17")
+        }
+
+        assertNull(error.retryAfterMs)
+    }
+
+    @Test
+    fun `socialProfile_403 不吞成空昵称`() {
+        server.enqueue(MockResponse().setResponseCode(403).setBody("Access is Denied"))
+
+        assertThrows(GarminNetworkException.Forbidden::class.java) {
+            // GUID 才会触发查 socialProfile；普通昵称直接返回，不打请求
+            client.resolvePathUser(
+                AccountRegion.CN,
+                "AT",
+                "371d55ac-80da-47eb-9e5f-0d5b0e6e9a11",
+            )
+        }
     }
 }

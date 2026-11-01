@@ -40,14 +40,14 @@ object AboutContent {
      */
     val changeLogs: List<ChangeLogEntry> = listOf(
         ChangeLogEntry(
-            version = "1.14.3",
-            date = "2026-10-31",
+            version = "1.14.10",
+            date = "2026-11-01",
             highlights = listOf(
-                "429 改为全局冷却：一次触发后 10 分钟内不再发任何请求，连续触发依次升到 30 分钟、1 小时、3 小时",
-                "冷却期内手动同步、自动同步、后台同步、搬运、复制活动全部跳过，不再「越点越久」",
-                "同步改成逐日请求留 400ms 间隔、两个账号之间留 1.2 秒，一次同步不再几秒内打十几个请求",
-                "一个账号被限流就结束整轮同步，不拿另一个账号去试",
-                "提示直接写剩余时间和恢复时刻，例如「还有 12 分钟（22:05 后自动恢复）」",
+                "换掉了「一直 403」的真正原因：日汇总接口的 URL 里带了账号（/usersummary/daily/{账号}），Garmin 新网关把这判成越权访问，直接回 message 为 null 的 ForbiddenException。现在改成不带账号的 /usersummary/daily/?calendarDate=，由令牌自己决定读谁的数据（老网关不认时自动退回旧路径）",
+                "请求身份改成与社区维护的 garth 0.8.0 一致：只发 iOS 的 User-Agent（GCM-iOS-5.22.1.4），不再附带任何 X-Garmin-* 设备头。1.14.8 补的那整套设备头一条 403 也没挡下来，说明被拦的是指纹本身",
+                "换令牌的 audience 改回不带季度后缀的 GARMIN_CONNECT_MOBILE_ANDROID_DI，并校验换到的令牌是否带 CONNECT_READ：缺这条权限就继续换下一个，不会把「能验签、不能读数据」的令牌存进本地",
+                "睡眠接口 403 时自动改用 /sleep-service/sleep/dailySleepData，不再整段失败",
+                "同步诊断新增「令牌权限」一行，可直接看出 403 是令牌没权限还是接口变了",
             ),
         ),
     )

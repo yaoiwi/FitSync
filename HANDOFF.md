@@ -417,7 +417,8 @@ HTTP 403，Cookie[__cf_bm,__cflb,__cfuid]，响应片段：Access is Denied.
 改动：
 
 1. **移动端调用前清空 CookieJar**（移动接口本就不需要 Cookie）；
-2. **移动端改用原生 App UA**：`GCM-Android-5.23` + `x-garmin-user-agent`；
+2. **移动端改用原生 App UA**：`GCM-Android-5.23` + `x-garmin-user-agent`
+   （**1.14.10 已废弃**：这套 Android 指纹被网关拉黑，最终身份是 `GCM-iOS-5.22.1.4` 且不带设备头，见第十七节）；
 3. **新增 WebView 登录**（`GarminWebLoginScreen`）：在真实浏览器引擎里打开
    `{ssoBase}/mobile/sso/en_US/sign-in?clientId=GCM_ANDROID_DARK&service={mobileService}`，
    JS 挑战、TLS、Cookie 全由 WebView 处理；登录成功后从两条路拿 ticket：
@@ -540,7 +541,59 @@ Authorization: Bearer <access_token>
 
 ### 策略
 
-- 首次无游标：回填 7 天；有游标：从「上次同步日 - 1」续上，避免跨天缺口；
+- 首次无游标：回填 7 天；有游标：从「上次同步那天」续上（那天的数据可能后补）；
+  当天已经同步过就只拉今天，避免重复请求（1.14.5 起）；
+- **403 与 429 必须分开**：403 是请求被拒（权限/风控/出口 IP），不进入冷却；
+  只有 429 才走冷却阶梯。混在一起会让 403 被锁 48 小时且到点仍是 403，看起来像永远限流；
+- **403 的三层含义**（1.14.5～1.14.10，逐层实测）：
+  1. 请求里**没有** `Authorization` 头 → `{"message":"HTTP 403 Forbidden","error":"ForbiddenException"}`；
+  2. 带了任何 token（哪怕伪造的）→ 401；
+  3. **`{"message":null,"error":"ForbiddenException"}`** 是第三种：token 在、签名也认，
+     但网关（Spring 过滤器）拒绝。`message` 为 null 是它的标志，和无令牌的 403 可据此区分。
+     1.14.10 之前一直误判成「缺设备头」，实际有三个独立成因，见下；
+- **URL 里不能带用户标识**（1.14.10，这是 403 的主因）：
+  ```
+  ✗ GET {api}/usersummary-service/usersummary/daily/{displayName}?calendarDate=…
+  ✓ GET {api}/usersummary-service/usersummary/daily/?calendarDate=…
+  ```
+  新网关把「从路径指定用户名」判成越权，直接回 message 为 null 的 403。改成不带用户名后
+  由令牌自己决定读谁的数据。依据：garth 0.8.0 的 `data/daily_summary.py`。
+  老网关（部分中国区账号）还会 404，所以 `fetchDailySummaryJson` 在 400/404/405 时
+  **回退一次**带用户名的旧路径，别把原本能用的账号弄坏。
+  睡眠同理：403 时改用 `/sleep-service/sleep/dailySleepData?date=`（响应结构一样）；
+- **身份头只发 iOS UA**（1.14.10，推翻了 1.14.6/1.14.8 的做法）：
+  `User-Agent: GCM-iOS-5.22.1.4`，**不带任何 `X-Garmin-*`**。
+  依据同样是 garth 0.8.0：它对 connectapi 只发这一个头，登录却用 Android 的
+  `GCM_ANDROID_DARK`——UA 只是指纹，不构成强绑定。反过来，1.14.5～1.14.9 期间换过
+  浏览器 UA、补过整套 Android 设备头，403 一条没少，说明被拦的是**指纹本身**。
+  教训：不要靠「更像官方」来猜头，先去 garth 的 `http.py` / `sso.py` 抄现成的；
+- **换令牌两条路，都要校验 scope**（1.14.9 起的结构 + 1.14.10 的校验）：
+  ```
+  POST https://diauth.garmin.com/di-oauth2-service/oauth/token
+  Authorization: Basic base64("{client_id}:")
+  form: client_id / service_ticket / grant_type / service_url
+  grant_type = https://connectapi.garmin.com/di-oauth2-service/oauth/grant/service_ticket
+  service_url = {ssoOrigin}/sso/embed（必须与登录时签发票据的 service 一致）
+  ```
+  兜底旧路：`POST {api}/oauth-service/oauth/exchange/user/2.0`（OAuth1 签名 + `audience`），
+  audience 首选**不带季度后缀**的 `GARMIN_CONNECT_MOBILE_ANDROID_DI`（garth 同款）。
+  **关键**：错误的 audience / client_id 也会返回 200，只是 `scope` 里没有 `CONNECT_READ`。
+  这种令牌能验签、不能读数据，正是「一直 403、令牌也换了新的」的来源。
+  所以 `TokenBundle.canReadConnectData()` 是硬门槛：缺这条权限就当这次换取失败，
+  继续下一个候选，坏令牌绝不落库；
+- **不要**加 `NK` / `DI-Backend`——那两个是网页 Cookie(JWT_WEB) 模式的头，配 Bearer 会 500；
+- **令牌失效时 Garmin 不老实回 401**，而是 302 到 SSO 登录页。OkHttp 默认跟随重定向，
+  且**跨域重定向会剥掉 Authorization**，最终落在登录页上返回的正是那个 403
+  —— 401 分支永远走不到，续期一次都没跑过。所以 `connectapi` 的所有请求改用
+  `followRedirects(false)` 的 `restClient`（见 `GarminConnectClient.restClient`），
+  3xx 一律当 `Unauthorized` 处理；
+- **403 也要续期一次**：`syncAccount` 里 `Forbidden` → 强制 `refreshOrThrow` → 重试一次；
+  续期本身 403 才保留原始错误。Garmin 的 DI token 过期后经常直接给 403；
+- **诊断**：`GarminDiagnostics` 记录最近 12 次失败（端点 / 状态码 / 令牌长度 / cf-ray /
+  Location / 响应体摘要），并在头部显示「令牌权限：含或缺 CONNECT_READ」。
+  设置页「同步诊断」可一键复制——这一行直接把「令牌签错」和「接口改了」区分开；
+- **不要再按 403 换 UA**（1.14.9 删除浏览器 UA，1.14.10 删除设备头）：
+  任何情况下都保持同一套身份，否则诊断会自相矛盾，排查无从下手；
 - 活动取最近 20 条，靠 `UNIQUE(account_id, external_id)` 幂等去重；
 - `access_token` 401 → 用 refresh_token 换新再重试一次；refresh 失败且无密码 → 提示重新登录；
 - 失败只记日志、**不更新 `last_sync_at_ms`**（避免把失败伪装成"刚同步过"）；

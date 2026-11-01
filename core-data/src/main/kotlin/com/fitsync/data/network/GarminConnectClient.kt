@@ -27,12 +27,12 @@ private const val FIT_SERIAL_MAX = 4_294_967_294L
 /**
  * Garmin Connect 数据接口（只读）。
  *
- * 三个端点就够撑起 v1：
  * ```
- * GET {api}/usersummary-service/usersummary/daily/{displayName}?calendarDate=yyyy-MM-dd
+ * GET {api}/usersummary-service/usersummary/daily/?calendarDate=yyyy-MM-dd
  * GET {api}/wellness-service/wellness/dailySleepData/{displayName}?date=yyyy-MM-dd
  * GET {api}/activitylist-service/activities/search/activities?limit=20&start=0
  * ```
+ * 注意日汇总**不带用户名**：新网关把 URL 里的用户标识判为越权，回 message 为 null 的 403。
  * 鉴权：`Authorization: Bearer <access_token>`（登录链路已落库）。
  *
  * 解析刻意做得宽松：字段缺失就取默认值，绝不因为 Garmin 加字段就整批失败。
@@ -111,12 +111,7 @@ class GarminConnectClient @Inject constructor(
         date: String,
     ): DailySummary? {
         val ep = endpoints(region)
-        val url = (ep.apiBase + "/usersummary-service/usersummary/daily/" +
-            encodePath(displayName)).toHttpUrl().newBuilder()
-            .addQueryParameter("calendarDate", date)
-            .build()
-
-        val json = getJson(url, accessToken) ?: return null
+        val json = fetchDailySummaryJson(ep, accessToken, displayName, date) ?: return null
         val summary = DailySummary(
             date = json.optString("calendarDate", date),
             steps = json.optInt("totalSteps"),
@@ -141,6 +136,46 @@ class GarminConnectClient @Inject constructor(
         return if (hasAnyData) summary else null
     }
 
+    /**
+     * 取日汇总的 JSON。
+     *
+     * **路径里不再带用户标识**：Garmin 的新网关把「从 URL 里指定用户名」当成越权访问，
+     * 直接回 `{"message":null,"error":"ForbiddenException"}`（message 为 null 的 403 就是它）。
+     * 现在的写法让服务端从令牌自己推断用户：
+     *
+     * ```
+     * GET {api}/usersummary-service/usersummary/daily/?calendarDate=yyyy-MM-dd
+     * ```
+     *
+     * 这个形式来自 garth 0.8.0 的 `data/daily_summary.py`，是目前实测能通的写法。
+     * 老网关（中国区早期账号）可能只认带用户名的路径，所以 404/400 时回退一次，
+     * 保证不会因为换了端点把原本能用的账号弄坏。
+     */
+    private fun fetchDailySummaryJson(
+        ep: GarminEndpoints,
+        accessToken: String,
+        displayName: String,
+        date: String,
+    ): JSONObject? {
+        val anonymous = (ep.apiBase + "/usersummary-service/usersummary/daily/").toHttpUrl()
+            .newBuilder()
+            .addQueryParameter("calendarDate", date)
+            .build()
+
+        var status = 0
+        val json = getJson(anonymous, accessToken) { status = it }
+        if (json != null) return json
+        // 400/404/405：这个网关还不认无用户名的形式，退回旧路径
+        if (status in intArrayOf(400, 404, 405)) {
+            val legacy = (ep.apiBase + "/usersummary-service/usersummary/daily/" +
+                encodePath(displayName)).toHttpUrl().newBuilder()
+                .addQueryParameter("calendarDate", date)
+                .build()
+            return getJson(legacy, accessToken)
+        }
+        return null
+    }
+
     fun fetchSleep(
         region: AccountRegion,
         accessToken: String,
@@ -154,7 +189,19 @@ class GarminConnectClient @Inject constructor(
             .addQueryParameter("nonSleepBufferMinutes", "60")
             .build()
 
-        val root = getJson(url, accessToken) ?: return null
+        // 403 时换新端点：和日汇总同样的收紧逻辑，带用户名的旧路径会被判越权。
+        // 新端点的响应结构一样（dailySleepDTO），解析代码不用改。
+        val root = try {
+            getJson(url, accessToken)
+        } catch (e: GarminNetworkException.Forbidden) {
+            getJson(
+                (ep.apiBase + "/sleep-service/sleep/dailySleepData").toHttpUrl()
+                    .newBuilder()
+                    .addQueryParameter("date", date)
+                    .build(),
+                accessToken,
+            )
+        } ?: return null
         val dto = root.optJSONObject("dailySleepDTO") ?: return null
         val start = dto.optLong("sleepStartTimestampGMT", 0L)
         val end = dto.optLong("sleepEndTimestampGMT", 0L)
@@ -287,24 +334,88 @@ class GarminConnectClient @Inject constructor(
         }.getOrNull()
     }
 
-    private fun getText(url: HttpUrl, accessToken: String): String? {
-        val request = Request.Builder()
+    /**
+     * 发一个 GET。
+     *
+     * 这里**不再**根据 403 切换浏览器 UA：实测「移动端 UA + 设备头」与「浏览器 UA +
+     * 设备头」对同一张令牌返回完全相同的状态码，UA 并不是门槛；而一旦切到浏览器模式
+     * 就会丢掉 `X-Garmin-*`，反而**永远** 403。身份头固定，问题交给上层（续期 / 报错）。
+     */
+    private fun getRaw(url: HttpUrl, accessToken: String, accept: String = "application/json"): Response =
+        executeGet(url, accessToken, accept)
+
+    private fun executeGet(url: HttpUrl, accessToken: String, accept: String): Response {
+        val builder = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $accessToken")
-            .header("Accept", "application/json")
-            .header("User-Agent", "GCM-Android-5.23")
-            .get()
-            .build()
+            .header("Accept", accept)
+        // 身份头：与 garth 0.8.0 一致，只发 iOS 的 User-Agent。
+        // 1.14.8 试过补一整套 X-Garmin-*，403 一条没少，说明那批头不是门槛。
+        GarminUserAgent.deviceHeaders().forEach { (name, value) -> builder.header(name, value) }
+        return restClient.newCall(builder.get().build()).execute()
+    }
 
-        httpClient.newCall(request).execute().use { response ->
+    /**
+     * 不跟随重定向的客户端，只给 `connectapi` 用。
+     *
+     * **这是 403 的真正来源之一**：令牌失效时 Garmin 不会老实地回 401，而是把请求
+     * 302 到 SSO 登录页。OkHttp 默认跟随重定向，并且**跨域时会丢掉 `Authorization`**
+     * ——最终请求落到登录页上，返回的正是
+     * `{"message":"HTTP 403 Forbidden","error":"ForbiddenException"}`。
+     *
+     * 于是 App 看到的是「403 权限问题」，而真实原因是「令牌失效、需要续期」，
+     * 续期逻辑永远等不到 401，用户就一直卡在 403。
+     *
+     * 关掉跟随之后，3xx 会原样暴露出来，由 [getText] 当成令牌失效处理。
+     * 共享原客户端的连接池与线程池，不额外占资源。
+     */
+    private val restClient: OkHttpClient by lazy {
+        httpClient.newBuilder()
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+    }
+
+    /**
+     * 这个响应是不是「边缘防护拦截」而不是业务结果。
+     *
+     * 只用于诊断（帮助判断该等冷却还是换网络），**不**触发任何重试。
+     * 429 带 `cf-ray` 表示是 Cloudflare 在挡，同样按限流处理：连续硬撞只会更糟。
+     */
+    private fun isEdgeRejection(response: Response): Boolean =
+        response.code == 403 || (response.code == 429 && response.header("cf-ray") != null)
+
+    private fun getText(
+        url: HttpUrl,
+        accessToken: String,
+        onStatus: ((Int) -> Unit)? = null,
+    ): String? {
+        getRaw(url, accessToken).use { response ->
+            onStatus?.invoke(response.code)
+            val endpoint = url.encodedPath.substringAfterLast('/').ifBlank { url.encodedPath }
             when {
-                // 401 是可自愈的：由调用方换新令牌后重试，这里只负责准确上报
-                response.code == 401 -> throw GarminNetworkException.Unauthorized()
-                response.code == 403 -> throw GarminNetworkException.RiskBlocked(
-                    IOException("Connect API 403")
-                )
+                // 3xx：Garmin 用「重定向到登录页」来表达「令牌不认了」。
+                // 跟随重定向会丢掉 Authorization，最后变成一个看不出所以然的 403，
+                // 所以这里必须拦下来，当成令牌失效交给上层续期。
+                response.code in 300..399 -> {
+                    record(url, accessToken, response, body = null)
+                    throw GarminNetworkException.Unauthorized(
+                        "令牌已失效（HTTP ${response.code} 跳转到登录页），需要重新换取"
+                    )
+                }
+                // 401 可自愈：由调用方换新令牌后重试，这里只负责准确上报
+                response.code == 401 -> {
+                    record(url, accessToken, response, body = null)
+                    throw GarminNetworkException.Unauthorized()
+                }
+                // 403：把 Garmin 的原话留下来。看不出原因时，用户至少能把它发出来
+                response.code == 403 -> {
+                    val body = GarminDiagnostics.snippet(response.body?.string())
+                    record(url, accessToken, response, body)
+                    throw GarminNetworkException.Forbidden(endpoint, body)
+                }
                 response.code == 429 -> throw GarminNetworkException.RiskBlocked(
-                    IOException("Connect API 限流（429）"),
+                    IOException("Connect API 限流（429）：${url.encodedPath}"),
                     retryAfterMs = retryAfterMs(response),
                 )
                 response.code >= 500 -> throw GarminNetworkException.NetworkUnavailable(
@@ -314,6 +425,23 @@ class GarminConnectClient @Inject constructor(
             }
             return response.body?.string()
         }
+    }
+
+    /** 把一次非成功响应写进诊断记录（不落令牌原文） */
+    private fun record(url: HttpUrl, accessToken: String, response: Response, body: String?) {
+        GarminDiagnostics.record(
+            GarminDiagnostics.Entry(
+                atMs = System.currentTimeMillis(),
+                endpoint = url.encodedPath,
+                method = "GET",
+                code = response.code,
+                tokenLength = accessToken.length,
+                host = url.host,
+                cfRay = response.header("cf-ray"),
+                location = response.header("Location"),
+                bodySnippet = GarminDiagnostics.snippet(body),
+            )
+        )
     }
 
     // ============================ 账号路径标识 ============================
@@ -341,9 +469,17 @@ class GarminConnectClient @Inject constructor(
         val now = System.currentTimeMillis()
         pathUserCache[key]?.let { if (it.expiresAtMs > now) return it.value }
 
-        val resolved = runCatching { fetchPathUser(region, accessToken) }.getOrNull()
-            ?.takeIf { it.isNotBlank() && !looksLikeGuid(it) }
-            ?: fallback
+        // 404 / 解析失败退回 fallback 即可；403 / 429 必须原样抛出，否则会被误当成
+        // 「只是没有昵称」，真正的拦截原因要等到后面几十个 404 才暴露
+        val resolved = try {
+            fetchPathUser(region, accessToken)
+        } catch (e: GarminNetworkException.Forbidden) {
+            throw e
+        } catch (e: GarminNetworkException.RiskBlocked) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }?.takeIf { it.isNotBlank() && !looksLikeGuid(it) } ?: fallback
         if (resolved.isNotBlank()) {
             pathUserCache[key] = CachedPathUser(resolved, now + 30 * 60_000L)
         }
@@ -353,28 +489,21 @@ class GarminConnectClient @Inject constructor(
     /** 只查一次 socialProfile，取能直接放进 URL 的标识 */
     private fun fetchPathUser(region: AccountRegion, accessToken: String): String? {
         val ep = endpoints(region)
-        val request = Request.Builder()
-            .url((ep.apiBase + "/userprofile-service/socialProfile").toHttpUrl())
-            .header("Authorization", "Bearer $accessToken")
-            .header("Accept", "application/json")
-            .header("User-Agent", "GCM-Android-5.23")
-            .header("NK", "NT")
-            .get()
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) return null
-            val json = runCatching { JSONObject(response.body?.string().orEmpty()) }.getOrNull()
-                ?: return null
-            // displayName 优先；为空或是 GUID 时退回数字 profileId
-            json.optString("displayName").takeIf { it.isNotBlank() && !looksLikeGuid(it) }
-                ?.let { return it }
-            json.optString("userName").takeIf { it.isNotBlank() && !looksLikeGuid(it) }
-                ?.let { return it }
-            json.optLong("profileId", 0L).takeIf { it > 0 }?.let { return it.toString() }
-            json.optLong("id", 0L).takeIf { it > 0 }?.let { return it.toString() }
-            return null
-        }
+        // 走 getText：UA 被边缘拦下时它会自动换浏览器 UA 重试，
+        // 403 / 429 也由那里统一抛出，不再被吞成「查不到昵称」
+        val text = getText(
+            (ep.apiBase + "/userprofile-service/socialProfile").toHttpUrl(),
+            accessToken,
+        ) ?: return null
+        val json = runCatching { JSONObject(text) }.getOrNull() ?: return null
+        // displayName 优先；为空或是 GUID 时退回数字 profileId
+        json.optString("displayName").takeIf { it.isNotBlank() && !looksLikeGuid(it) }
+            ?.let { return it }
+        json.optString("userName").takeIf { it.isNotBlank() && !looksLikeGuid(it) }
+            ?.let { return it }
+        json.optLong("profileId", 0L).takeIf { it > 0 }?.let { return it.toString() }
+        json.optLong("id", 0L).takeIf { it > 0 }?.let { return it.toString() }
+        return null
     }
 
     private fun looksLikeGuid(value: String): Boolean =
@@ -658,22 +787,30 @@ class GarminConnectClient @Inject constructor(
         val ep = endpoints(region)
         val url = (ep.apiBase + "/download-service/files/wellness/" + encodePath(date))
             .toHttpUrl()
-        val request = Request.Builder()
-            .url(url)
-            .header("Authorization", "Bearer $accessToken")
-            .header("Accept", "*/*")
-            .header("User-Agent", "GCM-Android-5.23")
-            .get()
-            .build()
-
-        httpClient.newCall(request).execute().use { response ->
+        // 走 getRaw：UA 被 Cloudflare 拦下时会自动换浏览器 UA 再试一次
+        getRaw(url, accessToken, accept = "*/*").use { response ->
             when {
-                response.code == 401 -> throw GarminNetworkException.Unauthorized()
-                response.code == 403 || response.code == 429 ->
-                    throw GarminNetworkException.RiskBlocked(
-                        IOException("wellness 下载 ${response.code}"),
-                        retryAfterMs = retryAfterMs(response),
+                // 与 getText 一致：3xx 说明令牌不认了，跟着跳过去只会丢掉 Authorization
+                response.code in 300..399 -> {
+                    record(url, accessToken, response, body = null)
+                    throw GarminNetworkException.Unauthorized(
+                        "令牌已失效（HTTP ${response.code} 跳转到登录页），需要重新换取"
                     )
+                }
+                response.code == 401 -> {
+                    record(url, accessToken, response, body = null)
+                    throw GarminNetworkException.Unauthorized()
+                }
+                response.code == 403 -> {
+                    // 二进制接口，读一小段就够判断是 JSON 报错还是 HTML 登录页
+                    val body = GarminDiagnostics.snippet(response.peekBody(512).string())
+                    record(url, accessToken, response, body)
+                    throw GarminNetworkException.Forbidden("wellness/$date", body)
+                }
+                response.code == 429 -> throw GarminNetworkException.RiskBlocked(
+                    IOException("wellness 下载 429"),
+                    retryAfterMs = retryAfterMs(response),
+                )
                 response.code >= 500 -> throw GarminNetworkException.NetworkUnavailable(
                     IOException("wellness 下载 ${response.code}")
                 )
@@ -718,6 +855,8 @@ class GarminConnectClient @Inject constructor(
         val trace: String = "",
         /** 目标账号已有同一份 wellness 文件（HTTP 409 / Duplicate Wellness File）——不是失败 */
         val duplicate: Boolean = false,
+        /** 被边缘防护按 UA 拦下（403 / 带 cf-ray 的 429），内部用来决定是否换 UA 重试 */
+        val edgeBlocked: Boolean = false,
     ) {
         /** 给用户看的一句话 */
         val errorText: String
@@ -856,21 +995,23 @@ class GarminConnectClient @Inject constructor(
             )
             .build()
 
-        // 只留必要的头。之前额外加的 `NK` / `DI-Backend` 只是从别处推测的写法，
-        // 真机上带它们反而让网关把请求转到了错误的内部服务，回 500。
-        var builder = Request.Builder()
-            .url(url.toHttpUrl())
-            .header("Authorization", "Bearer $accessToken")
-            .header("Accept", "application/json, text/plain, */*")
-            .header("User-Agent", "GCM-Android-5.23")
-        if (web) {
-            // Web 域的这条路是按"网页上传"走的，才需要来源头
-            builder = builder
-                .header("Origin", ep.webBase)
-                .header("Referer", ep.webBase + "/modern/")
-                .header("X-Requested-With", "XMLHttpRequest")
+        // 身份头只有一套，不再按 403 切换（切了会丢 X-Garmin-*，反而一直 403）
+        fun newBuilder(): Request.Builder {
+            val b = Request.Builder()
+                .url(url.toHttpUrl())
+                .header("Authorization", "Bearer $accessToken")
+                .header("Accept", "application/json, text/plain, */*")
+            GarminUserAgent.deviceHeaders().forEach { (name, value) -> b.header(name, value) }
+            if (web) {
+                // Web 域的这条路是按"网页上传"走的，才需要来源头
+                b.header("Origin", ep.webBase)
+                    .header("Referer", ep.webBase + "/modern/")
+                    .header("X-Requested-With", "XMLHttpRequest")
+            }
+            return b
         }
-        var request = builder.post(multipart).build()
+
+        var request = newBuilder().post(multipart).build()
 
         // OAuth1 兜底：某些区域的上传路由只认 `Authorization: OAuth ...`，不认 DI Bearer。
         // 签名不包含 multipart body（OAuth1 规范里 multipart 不参与签名基串）。
@@ -878,15 +1019,37 @@ class GarminConnectClient @Inject constructor(
             request = OAuth1Signer.sign(request, oauth1Token, oauth1Secret)
         }
 
-        return try {
-            httpClient.newCall(request).execute().use { response ->
+        return executeUpload(request)
+    }
+
+    private fun executeUpload(request: Request): UploadOutcome =
+        try {
+            // restClient：上传同样不能用「跟随重定向」，否则令牌过期时的 302 会
+            // 变成一个丢掉 Authorization 的 403
+            restClient.newCall(request).execute().use { response ->
                 val text = response.body?.string().orEmpty()
-                parseUpload(response.code, text)
+                val edge = response.code == 403 ||
+                    (response.code == 429 && response.header("cf-ray") != null)
+                if (response.code >= 300) {
+                    GarminDiagnostics.record(
+                        GarminDiagnostics.Entry(
+                            atMs = System.currentTimeMillis(),
+                            endpoint = request.url.encodedPath,
+                            method = "POST",
+                            code = response.code,
+                            tokenLength = request.header("Authorization")?.length ?: 0,
+                            host = request.url.host,
+                            cfRay = response.header("cf-ray"),
+                            location = response.header("Location"),
+                            bodySnippet = GarminDiagnostics.snippet(text),
+                        )
+                    )
+                }
+                parseUpload(response.code, text).copy(edgeBlocked = edge)
             }
         } catch (e: Exception) {
             UploadOutcome(ok = false, code = 0, body = e.message ?: e.javaClass.simpleName)
         }
-    }
 
     /**
      * 判成功不能只看 2xx：Garmin 在"文件被接收但内容被拒"时会返回 200/419 且
@@ -927,8 +1090,12 @@ class GarminConnectClient @Inject constructor(
         )
     }
 
-    private fun getJson(url: HttpUrl, accessToken: String): JSONObject? {
-        val text = getText(url, accessToken) ?: return null
+    private fun getJson(
+        url: HttpUrl,
+        accessToken: String,
+        onStatus: ((Int) -> Unit)? = null,
+    ): JSONObject? {
+        val text = getText(url, accessToken, onStatus) ?: return null
         return runCatching { JSONObject(text) }.getOrNull()
     }
 

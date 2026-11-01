@@ -57,6 +57,8 @@ class GarminSyncEngine @Inject constructor(
         val rateLimited: Boolean = false,
         /** 服务端 `Retry-After` 给出的等待时长（毫秒），没有就是 null */
         val retryAfterMs: Long? = null,
+        /** 是否被 403 拒绝：不是限流，重试也不会好，后台任务不该再 retry */
+        val forbidden: Boolean = false,
     )
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
@@ -83,6 +85,17 @@ class GarminSyncEngine @Inject constructor(
                 } catch (e: GarminNetworkException.Unauthorized) {
                     // 本地记录的过期时间不可信时（服务端提前作废），换一张再来一次
                     pullAll(account, refreshOrThrow(credential).accessToken, backfillDays)
+                } catch (e: GarminNetworkException.Forbidden) {
+                    // Garmin 在令牌失效时并不总是老实回 401，有时直接 403
+                    // （请求被重定向到登录页、或令牌被提前吊销）。这时续期能救回来，
+                    // 所以先无条件换一张新令牌再试一次；仍 403 才是真的权限/网络问题。
+                    val fresh = try {
+                        refreshOrThrow(credential)
+                    } catch (refreshError: Exception) {
+                        // 续期本身也失败（OAuth1 被吊销），保留原始的 403 更有信息量
+                        throw e
+                    }
+                    pullAll(account, fresh.accessToken, backfillDays)
                 }
 
                 val todayText = LocalDate.now().format(dateFormatter)
@@ -120,6 +133,7 @@ class GarminSyncEngine @Inject constructor(
                     message = message,
                     rateLimited = e is GarminNetworkException.RiskBlocked,
                     retryAfterMs = (e as? GarminNetworkException.RiskBlocked)?.retryAfterMs,
+                    forbidden = e is GarminNetworkException.Forbidden,
                 )
             }
         }
@@ -285,7 +299,8 @@ class GarminSyncEngine @Inject constructor(
     /**
      * 历史回填：过去 [days] 天的日汇总/睡眠，加上全量活动（分页翻到底）。
      *
-     * 一年约 730 次请求，刻意限速 200ms/次；只由用户在前台手动触发，
+     * 一年约 730 天、每天 2 个请求。刻意限速 1 秒/次，并且一次最多跑 3 个月的
+     * 分片（剩下的下次继续）；只由用户在前台手动触发，
      * 进度通过 [onProgress] 回传，避免界面看起来像卡死。
      */
     suspend fun backfillHistory(
@@ -350,7 +365,11 @@ class GarminSyncEngine @Inject constructor(
 
             val pending = repository.pendingBackfillShards(accountId)
                 .filter { it.dataDomain == "health" }
-            for (shard in pending) {
+            // 每次最多补 3 个月：一年份 = 730 天 × 2 个接口 = 1460 个请求，
+            // 一口气发完必然 429，然后就是 48 小时锁账号。分片本身会记录进度，
+            // 剩下的月份下次点「回填」接着跑，不需要从头来。
+            val batch = pending.take(MAX_SHARDS_PER_RUN)
+            for (shard in batch) {
                 var day = LocalDate.parse(shard.startDate)
                 val end = LocalDate.parse(shard.endDate)
                 while (!day.isAfter(end)) {
@@ -359,7 +378,8 @@ class GarminSyncEngine @Inject constructor(
                     if (saveSleep(accountId, region, token, pathUser, date)) records++
                     done++
                     if (done % 5 == 0) onProgress(done, total, "已补到 $date")
-                    delay(200)
+                    // 200ms 太密：Garmin 的限流看的是每分钟请求数，1 秒一个才稳
+                    delay(BACKFILL_REQUEST_GAP_MS)
                     day = day.plusDays(1)
                 }
                 repository.markBackfillShard(
@@ -369,6 +389,7 @@ class GarminSyncEngine @Inject constructor(
                 )
                 onProgress(done.coerceAtMost(total), total, "已完成 ${shard.month}")
             }
+            val remainingShards = (pending.size - batch.size).coerceAtLeast(0)
 
             var start = 0
             val pageSize = 100
@@ -380,7 +401,7 @@ class GarminSyncEngine @Inject constructor(
                 onProgress(total, total, "已拉取活动 ${start + page.size} 条")
                 if (page.size < pageSize) break
                 start += pageSize
-                delay(300)
+                delay(BACKFILL_REQUEST_GAP_MS)
             }
 
             val todayText = today.format(dateFormatter)
@@ -390,7 +411,17 @@ class GarminSyncEngine @Inject constructor(
             advanceCursor(accountId, "activity", todayText, finishedAt)
             repository.updateAccountStatus(accountId, AccountStatus.NORMAL.code, finishedAt)
             log(accountId, ok = true, records = records, durationMs = finishedAt - startedAt)
-            SyncOutcome(true, records, "回填完成，共 $records 条")
+            SyncOutcome(
+                true,
+                records,
+                buildString {
+                    append("回填完成，共 $records 条记录")
+                    if (remainingShards > 0) {
+                        append("；还有 $remainingShards 个月未补，")
+                        append("等几分钟再点一次「回填历史」会从断点继续")
+                    }
+                },
+            )
         } catch (e: Exception) {
             val message = e.message ?: e.javaClass.simpleName
             log(
@@ -400,7 +431,16 @@ class GarminSyncEngine @Inject constructor(
                 durationMs = System.currentTimeMillis() - startedAt,
                 error = message,
             )
-            SyncOutcome(false, 0, message)
+            // 回填中途 429 也必须上报：以前这里只返回 ok=false，上层不会进冷却，
+            // 用户看到失败就再点一次，几千个请求接着打，直接把账号锁死。
+            SyncOutcome(
+                ok = false,
+                records = 0,
+                message = message,
+                rateLimited = e is GarminNetworkException.RiskBlocked,
+                retryAfterMs = (e as? GarminNetworkException.RiskBlocked)?.retryAfterMs,
+                forbidden = e is GarminNetworkException.Forbidden,
+            )
         }
     }
 
@@ -445,6 +485,12 @@ class GarminSyncEngine @Inject constructor(
     private suspend fun refreshOrThrow(credential: StorableCredential): StorableCredential {
         val refreshed = try {
             ssoClient.refreshSession(credential)
+        } catch (e: GarminNetworkException.RiskBlocked) {
+            // 续期被限流 ≠ 登录过期。以前这里一律包成 SessionExpired，用户被引导去
+            // 重新登录，结果又打一串登录请求，把限流拖成 48 小时锁定。
+            throw e
+        } catch (e: GarminNetworkException.Forbidden) {
+            throw e
         } catch (e: Exception) {
             throw GarminNetworkException.SessionExpired(
                 "登录已过期，自动续期失败，请重新登录该账号（${e.message}）"
@@ -485,8 +531,12 @@ class GarminSyncEngine @Inject constructor(
         val last = cursor?.lastSyncDate?.takeIf { it.isNotBlank() }
             ?.let { runCatching { LocalDate.parse(it, dateFormatter) }.getOrNull() }
             ?: return fallback
-        val resume = last.minusDays(1)
-        return if (resume.isAfter(fallback)) resume else fallback
+        // 今天已经成功同步过：再点一次只需要今天，不必把昨天整天重拉一遍。
+        // 常规同步一天 2 个接口 × 2 天 = 4 个请求，省掉昨天就只剩 2 个，
+        // 对「一天点好几次」的用户，这是最直接的降请求手段。
+        if (!last.isBefore(today)) return today
+        // 从上次同步那天续上：那天的睡眠/汇总可能在同步之后才补齐，需要再拉一次
+        return if (last.isAfter(fallback)) last else fallback
     }
 
     private suspend fun log(
@@ -515,6 +565,12 @@ class GarminSyncEngine @Inject constructor(
     private companion object {
         /** 逐日请求之间的间隔：一天 2 个请求，400ms 间隔下 7 天约 5 秒完成 */
         const val DAY_REQUEST_GAP_MS = 400L
+
+        /** 回填请求间隔：1 秒一个，宁可慢，也不要把账号送进 48 小时锁定 */
+        const val BACKFILL_REQUEST_GAP_MS = 1_000L
+
+        /** 一次回填最多跑 3 个月分片，剩下的下次继续（分片进度会保留） */
+        const val MAX_SHARDS_PER_RUN = 3
 
         /** 两个账号之间的间隔：换账号时多留一点，避免被当成连续突发 */
         const val ACCOUNT_GAP_MS = 1_200L

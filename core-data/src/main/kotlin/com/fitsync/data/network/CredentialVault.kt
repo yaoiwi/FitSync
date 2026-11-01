@@ -112,6 +112,7 @@ class CredentialVault @Inject constructor(
             oauth1Secret = oauth1Secret,
             sessionKey = record.optString("sessionKey", ""),
             tokenExpiresAtMs = record.optLong("tokenExpiresAtMs", 0L),
+            diClientId = record.optString("diClientId", ""),
         )
     }
 
@@ -132,6 +133,7 @@ class CredentialVault @Inject constructor(
         record.put("tokenExpiresAtMs", credential.tokenExpiresAtMs)
         record.put("oauth1Token", credential.oauth1Token)
         record.put("oauth1Secret", credential.oauth1Secret)
+        record.put("diClientId", credential.diClientId)
         root.put(key(credential.sourceType, credential.region, credential.externalUserId), record)
 
         writeRaw(root.toString())

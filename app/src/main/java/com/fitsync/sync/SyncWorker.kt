@@ -46,6 +46,9 @@ class SyncWorker(
                 Result.success()
             } else if (results.isEmpty() || results.all { it.second.ok }) {
                 Result.success()
+            } else if (results.any { it.second.forbidden }) {
+                // 403 重试多少次都是 403，还会把「连续失败」写满日志；等下一个周期再说
+                Result.success()
             } else {
                 Result.retry()
             }

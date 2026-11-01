@@ -37,7 +37,9 @@ data class StorableCredential(
     val refreshToken: String = "",
     val sessionKey: String = "",
     val tokenExpiresAtMs: Long = 0L,
-    /** OAuth1 token：刷新 access token 用，必须保存 */
+    /** OAuth1 token：旧路刷新 access token 用 */
     val oauth1Token: String = "",
     val oauth1Secret: String = "",
+    /** DI 令牌的 client_id：新路用 refresh_token 续期时必须原样带回 */
+    val diClientId: String = "",
 )

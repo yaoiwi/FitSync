@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -51,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import android.widget.Toast
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +63,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.BuildConfig
+import com.fitsync.copyToClipboard
+import com.fitsync.data.network.GarminDiagnostics
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityEntity
 import com.fitsync.ui.components.accountTitle
@@ -292,6 +296,9 @@ fun HomeScreen(
                                 onWifiOnlyChange = viewModel::setWifiOnly,
                                 backfillDays = backfillDays,
                                 onBackfillDaysChange = viewModel::setBackfillDays,
+                                rateLimitRemainingMs = viewModel::rateLimitRemainingMs,
+                                rateLimitStrikes = viewModel::rateLimitStrikes,
+                                onRetryAfterRateLimit = viewModel::retryAfterRateLimit,
                                 onBackupDatabase = { uri ->
                                     scope.launch {
                                         val msg = runCatching { viewModel.backupDatabase(uri) }
@@ -967,6 +974,27 @@ private fun AccountRow(
 
 // ============================ 设置 ============================
 
+/** 冷却剩余时间的中文文案；超过一天要带天数，避免「23 小时」被理解成今晚就好 */
+private fun cooldownLabel(ms: Long): String {
+    val minute = 60_000L
+    val hour = 60 * minute
+    val day = 24 * hour
+    return when {
+        ms < minute -> "${(ms / 1000).coerceAtLeast(1)} 秒"
+        ms < hour -> "${ms / minute} 分钟"
+        ms < day -> {
+            val h = ms / hour
+            val m = (ms % hour) / minute
+            if (m > 0) "$h 小时 $m 分" else "$h 小时"
+        }
+        else -> {
+            val d = ms / day
+            val h = (ms % day) / hour
+            if (h > 0) "$d 天 $h 小时" else "$d 天"
+        }
+    }
+}
+
 @Composable
 private fun SettingsTab(
     accountCount: Int,
@@ -988,6 +1016,9 @@ private fun SettingsTab(
     onWifiOnlyChange: (Boolean) -> Unit = {},
     backfillDays: Int = 365,
     onBackfillDaysChange: (Int) -> Unit = {},
+    rateLimitRemainingMs: () -> Long = { 0L },
+    rateLimitStrikes: () -> Int = { 0 },
+    onRetryAfterRateLimit: () -> Unit = {},
     onBackupDatabase: (android.net.Uri) -> Unit = {},
     onRestoreDatabase: (android.net.Uri) -> Unit = {},
 ) {
@@ -999,6 +1030,23 @@ private fun SettingsTab(
     val intervalIndex = intervalValues.indexOf(syncIntervalHours).let { if (it < 0) 0 else it }
     val backfillValues = listOf(30, 90, 365)
     val backfillIndex = backfillValues.indexOf(backfillDays).let { if (it < 0) 2 else it }
+
+    // 冷却倒计时：每秒刷新一次，值没变时 Compose 不会重组，开销可以忽略
+    var cooldownMs by remember { mutableStateOf(0L) }
+    var strikes by remember { mutableStateOf(0) }
+    var showRetryConfirm by remember { mutableStateOf(false) }
+    // 最近一次失败的请求快照：403 光看状态码分不清是「没带令牌」还是「网络被拦」，
+    // 这里把证据摆在设置页，用户能直接复制发出来
+    var lastFailure by remember { mutableStateOf<GarminDiagnostics.Entry?>(null) }
+    var showDiagnostics by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            cooldownMs = rateLimitRemainingMs()
+            strikes = rateLimitStrikes()
+            lastFailure = GarminDiagnostics.latest()
+            delay(1_000L)
+        }
+    }
 
     val backupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
@@ -1014,9 +1062,56 @@ private fun SettingsTab(
         item {
             MiuixSectionTitle("同步")
             MiuixCard {
+                if (cooldownMs > 0L) {
+                    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "同步已暂停",
+                                fontSize = 16.sp,
+                                color = MiuixError,
+                                fontWeight = FontWeight.Medium,
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (strikes > 0) "Garmin 限流 · 连续第 $strikes 次" else "Garmin 限流",
+                                fontSize = 12.sp,
+                                color = MiuixSummary,
+                            )
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "还有 ${cooldownLabel(cooldownMs)}。冷却期间不会发出任何请求，" +
+                                "手动点同步也不会联网——这是为了避免把账号推进 48 小时锁定。",
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = MiuixSummary,
+                        )
+                        TextButton(
+                            onClick = { showRetryConfirm = true },
+                            contentPadding = PaddingValues(0.dp),
+                        ) {
+                            Text(
+                                text = "已换网络 / 已过锁定时间，立即重试",
+                                fontSize = 13.sp,
+                                color = MiuixPrimary,
+                            )
+                        }
+                    }
+                    MiuixDivider()
+                }
+                MiuixRow(
+                    title = "同步诊断",
+                    summary = lastFailure?.let {
+                        "最近一次失败：HTTP ${it.code} · ${it.endpoint}" +
+                            if (it.tokenLength == 0) "（请求没带令牌）" else ""
+                    } ?: "暂无失败记录",
+                    showArrow = true,
+                    onClick = { showDiagnostics = true },
+                )
+                MiuixDivider()
                 MiuixRow(
                     title = "打开即同步",
-                    summary = "进入前台自动拉取，5 分钟内不重复",
+                    summary = "进入前台自动拉取，30 分钟内不重复",
                     trailing = {
                         MiuixSwitch(
                             checked = autoSyncOnOpen,
@@ -1239,6 +1334,62 @@ private fun SettingsTab(
                 )
             }
         }
+    }
+
+    if (showRetryConfirm) {
+        AlertDialog(
+            onDismissRequest = { showRetryConfirm = false },
+            title = { Text("立即重试同步？") },
+            text = {
+                Text(
+                    "只有在换过网络（流量 / 另一个 Wi-Fi），或者已经过了上面提示的恢复时间后再点。\n\n" +
+                        "如果账号仍在 Garmin 的锁定窗口里，这次重试会立刻再收到 429，冷却会从当前档位重新计时。"
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showRetryConfirm = false
+                        onRetryAfterRateLimit()
+                    },
+                ) { Text("仍然重试") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRetryConfirm = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showDiagnostics) {
+        AlertDialog(
+            onDismissRequest = { showDiagnostics = false },
+            title = { Text("同步诊断") },
+            text = {
+                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                    Text(
+                        text = GarminDiagnostics.dump(),
+                        fontSize = 12.sp,
+                        lineHeight = 17.sp,
+                        color = MiuixSummary,
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        copyToClipboard(
+                            settingsContext,
+                            "FitSync 同步诊断",
+                            GarminDiagnostics.dump(),
+                        )
+                        showDiagnostics = false
+                    },
+                ) { Text("复制") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiagnostics = false }) { Text("关闭") }
+            },
+        )
     }
 }
 

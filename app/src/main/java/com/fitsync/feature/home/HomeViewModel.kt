@@ -267,6 +267,13 @@ class HomeViewModel @Inject constructor(
 
     fun syncNow() = syncCoordinator.syncNow()
 
+    /** 本地限流冷却的剩余时间 / 连击次数，设置页用来显示「还有多久」 */
+    fun rateLimitRemainingMs() = syncCoordinator.rateLimitRemainingMs()
+    fun rateLimitStrikes() = syncCoordinator.rateLimitStrikes()
+
+    /** 换过网络或已过锁定时间后，手动解除本地冷却并重试一次 */
+    fun retryAfterRateLimit() = syncCoordinator.retryAfterRateLimit()
+
     /** 「打开即同步」开关 */
     val autoSyncOnOpen: StateFlow<Boolean> = syncCoordinator.autoSyncOnOpenEnabled
     fun setAutoSyncOnOpen(enabled: Boolean) = syncCoordinator.setAutoSyncOnOpen(enabled)

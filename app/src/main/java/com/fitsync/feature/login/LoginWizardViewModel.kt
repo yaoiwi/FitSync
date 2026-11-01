@@ -190,6 +190,7 @@ class LoginWizardViewModel @Inject constructor(
                 tokenExpiresAtMs = expiresAt,
                 oauth1Token = session.oauth1Token,
                 oauth1Secret = session.oauth1Secret,
+                diClientId = session.diClientId,
             )
         )
 

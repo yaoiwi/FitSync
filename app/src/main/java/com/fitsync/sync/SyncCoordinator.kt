@@ -32,7 +32,7 @@ import javax.inject.Singleton
  * 为什么不在 ViewModel 里：**打开 App 就要同步**，而 ViewModel 只在首页可见时才存在；
  * 这里用 Application 级的协程作用域，Activity 启动时就能触发，UI 只订阅状态。
  *
- * 自动同步做了节流：同一进程内 5 分钟内不重复，避免切前后台就反复拉数据。
+ * 自动同步做了节流：30 分钟内不重复（见 [AUTO_SYNC_INTERVAL_MS]），避免切前后台就反复拉数据。
  */
 @Singleton
 class SyncCoordinator @Inject constructor(
@@ -126,6 +126,30 @@ class SyncCoordinator @Inject constructor(
         scope.launch { runSync(manual = true) }
     }
 
+    /** 设置页展示用：冷却剩余毫秒，0 表示当前可以请求 */
+    fun rateLimitRemainingMs(): Long = rateLimitGate.remainingMs()
+
+    /** 设置页展示用：这是连续第几次被限流 */
+    fun rateLimitStrikes(): Int = rateLimitGate.strikes()
+
+    /**
+     * 用户确认「已换网络 / 已过提示的锁定时间」后，手动解除本地冷却并立刻重试一次。
+     *
+     * 为什么需要这个入口：冷却时间是本地估算的（阶梯 + `Retry-After`），
+     * 有可能比真实锁定更长；也可能用户换了出口 IP，账号已经能用。没有手动解除，
+     * App 就会一直显示「账号限制」却一个请求都不发，看起来像同步坏了。
+     *
+     * 只清本地状态，不动连击计数以外的任何数据；如果账号真的还在锁定，
+     * 这次试探会立刻再收到 429，冷却会重新开始计时。
+     */
+    fun retryAfterRateLimit() {
+        scope.launch {
+            rateLimitGate.clear()
+            _state.value = UiState(syncing = false, message = "已清除本地冷却，正在重试…")
+            runSync(manual = true)
+        }
+    }
+
     private suspend fun runSync(manual: Boolean) {
         if (_state.value.syncing) return
         // 手动同步不受限制；自动同步在「仅 Wi-Fi」开启且当前是移动网络时直接跳过
@@ -139,7 +163,8 @@ class SyncCoordinator @Inject constructor(
                 _state.value = UiState(
                     syncing = false,
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}。" +
-                        "这段时间不会发出任何请求，越点恢复越慢",
+                        "这段时间不会发出任何请求，越点恢复越慢；" +
+                        "如果已经换了网络或过了锁定时间，到「设置 → 同步」点「立即重试」",
                 )
             }
             return
@@ -167,11 +192,24 @@ class SyncCoordinator @Inject constructor(
         val limited = results.firstOrNull { it.second.rateLimited }
 
         val message = when {
-            // 429 单独说：这不是「同步坏了」，而是账号侧的冷却，且必须先停下来
+            // 429 单独说：这不是「同步坏了」，而是账号侧的冷却，且必须先停下来。
+            // Garmin 的规则是「10 分钟内第二次 429 就锁账号 48–72 小时」，所以
+            // 这里必须把「再点会更久」写在提示里，否则用户一定会再点一次。
             limited != null -> {
                 rateLimitGate.noteRateLimited(limited.second.retryAfterMs)
-                "Garmin 限流（HTTP 429）：已停止请求，还有 ${rateLimitGate.waitLabel()}。" +
-                    "冷却期内的同步、搬运都会自动跳过，到点再点一次即可"
+                val strikes = rateLimitGate.strikes()
+                buildString {
+                    append("Garmin 限流（HTTP 429）：已停止全部请求，还有 ")
+                    append(rateLimitGate.waitLabel())
+                    append("。")
+                    if (strikes >= 2) {
+                        append("这已经是连续第 ").append(strikes).append(" 次，账号可能进入 48–72 小时锁定，")
+                        append("期间再点只会把锁定时间往后推；到点再试一次。")
+                    } else {
+                        append("10 分钟内再撞一次 429 会触发 48 小时账号锁定，所以这段时间别再点了；")
+                        append("也可以在浏览器登录 connect.garmin.cn 确认账号本身能正常打开。")
+                    }
+                }
             }
             failed.isNotEmpty() ->
                 "同步失败（${failed.size} 个账号）：${failed.first().second.message}"
@@ -180,7 +218,7 @@ class SyncCoordinator @Inject constructor(
         }
 
         if (limited == null && failed.isEmpty() && results.isNotEmpty()) {
-            // 完整成功一次，说明账号已恢复：清掉连击计数，下次再撞也是从 10 分钟起步
+            // 完整成功一次，说明账号已恢复：清掉连击计数，下次再撞也是从 30 分钟起步
             rateLimitGate.noteSuccess()
         }
 
@@ -378,6 +416,14 @@ class SyncCoordinator @Inject constructor(
     }.getOrDefault(true)
 
     private companion object {
-        const val AUTO_SYNC_INTERVAL_MS = 5 * 60_000L
+        /**
+         * 打开 App 时最多多久自动同步一次。
+         *
+         * 原来是 5 分钟——相当于只要用户一天开十几次 App，就已经在不停地
+         * 打 Garmin 的接口。python-garminconnect 维护者给出的底线是
+         * **轮询间隔不低于 15 分钟**，这里取 30 分钟更稳：一天最多几十个请求，
+         * 和参考项目（DailySync 每 3 小时跑一次）在同一量级。
+         */
+        const val AUTO_SYNC_INTERVAL_MS = 30 * 60_000L
     }
 }
