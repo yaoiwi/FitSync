@@ -1265,3 +1265,17 @@ Android 14 起 `dataSync` 必须单独声明 `FOREGROUND_SERVICE_DATA_SYNC`，�
 - 429 时同组未开工的那天返回 `CANCELLED`，不计入进度；
 - 失败消息最多留 `MAX_MESSAGES = 20` 条，365 天全失败时不撑大结果对象；
 - 搬运页预估文案、风险弹窗的「约 55 分钟 / 分 4 片」同步改为「约 25 分钟 / 分 2 片」。
+
+## 二十八、版本号规则与诊断弹窗（1.5.0）
+
+### 1. 新版本号规则（用户 2026-11-02 定）
+
+`X.Y.Z`，每段 0–9，**满 9 进位**：`1.5.9 → 1.6.0`，`1.9.9 → 2.0.0`。
+即 1.14.15 之后直接是 1.5.0，`versionCode` 保持每次 +1（86）。
+
+### 2. 同步诊断弹窗
+
+原实现是 Material3 `AlertDialog`：Material 的弹窗过渡、48dp 内边距、右对齐按钮。
+换成 `MiuixActionDialog`（26dp 圆角 + 底部文字按钮），正文放进 `MiuixGroupBg` 圆角块，
+`heightIn(max = 380.dp)` + `verticalScroll`，几十行诊断文本不会把按钮挤出屏幕。
+同屏的「立即重试同步？」也一并换成 `MiuixConfirmDialog`。

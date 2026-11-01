@@ -85,14 +85,31 @@ class SyncCoordinator @Inject constructor(
      */
     val longTaskRunning: StateFlow<Boolean> = _longTaskRunning.asStateFlow()
 
+    private val _copyHealthRunning = MutableStateFlow(false)
+
+    /**
+     * 只有「搬运健康数据」在跑。
+     *
+     * 这一年期的任务要二十多分钟，用户很可能一边等一边翻数据，
+     * 所以它单独用细线、列表保持可滑；其余同步与长任务都用刷新头停住。
+     */
+    val copyHealthRunning: StateFlow<Boolean> = _copyHealthRunning.asStateFlow()
+
     fun isLongTaskRunning(): Boolean = longTaskJob?.isActive == true
 
     /** 统一登记长任务：置位状态流，任务结束（含取消、异常）自动复位 */
-    private fun launchLongTask(block: suspend CoroutineScope.() -> Unit) {
+    private fun launchLongTask(
+        copyingHealth: Boolean = false,
+        block: suspend CoroutineScope.() -> Unit,
+    ) {
         val job = scope.launch(block = block)
         longTaskJob = job
         _longTaskRunning.value = true
-        job.invokeOnCompletion { _longTaskRunning.value = false }
+        if (copyingHealth) _copyHealthRunning.value = true
+        job.invokeOnCompletion {
+            _longTaskRunning.value = false
+            if (copyingHealth) _copyHealthRunning.value = false
+        }
     }
 
     /**
@@ -504,7 +521,7 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
             return
         }
-        launchLongTask {
+        launchLongTask(copyingHealth = true) {
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再搬运",

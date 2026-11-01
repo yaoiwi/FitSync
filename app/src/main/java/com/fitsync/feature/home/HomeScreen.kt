@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -34,7 +35,6 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.pullrefresh.PullRefreshIndicator
 import androidx.compose.material.pullrefresh.pullRefresh
 import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -94,6 +94,8 @@ import com.fitsync.ui.components.statusLabel
 import com.fitsync.ui.components.MiuixLeadingIcon
 import com.fitsync.ui.components.MiuixNavItem
 import com.fitsync.ui.components.MiuixPrimaryButton
+import com.fitsync.ui.components.MiuixActionDialog
+import com.fitsync.ui.components.MiuixConfirmDialog
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixSwitch
@@ -104,6 +106,7 @@ import com.fitsync.ui.theme.MiuixAction
 import com.fitsync.ui.theme.MiuixCanvas
 import com.fitsync.ui.theme.MiuixCardSurface
 import com.fitsync.ui.theme.MiuixError
+import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
 import com.fitsync.ui.components.MiuixSegmentedControl
@@ -166,8 +169,8 @@ fun HomeScreen(
         }
     }
     val syncState by viewModel.syncState.collectAsState()
-    // 长任务（搬运 / 回填 / 导入写回）运行中：概览页让刷新头停住转圈
-    val longTaskRunning by viewModel.longTaskRunning.collectAsState()
+    // 搬运健康数据运行中：只有当它用细线（要能一边等一边翻数据）
+    val copyHealthRunning by viewModel.copyHealthRunning.collectAsState()
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
     var renameTarget by remember { mutableStateOf<AccountEntity?>(null) }
@@ -255,7 +258,7 @@ fun HomeScreen(
                                 sleepStages = sleepStages,
                                 syncing = syncState.syncing,
                                 silent = syncState.silent,
-                                longTaskRunning = longTaskRunning,
+                                copyHealthRunning = copyHealthRunning,
                                 message = syncState.message,
                                 onSync = viewModel::syncNow,
                                 onSeeAccounts = { tab = 2 },
@@ -273,7 +276,7 @@ fun HomeScreen(
                                 primaryAccountId = primaryAccountId,
                                 aliases = aliases,
                                 syncing = syncState.syncing,
-                                longTaskRunning = longTaskRunning,
+                                copyHealthRunning = copyHealthRunning,
                                 onSync = viewModel::syncNow,
                                 onSetPrimary = viewModel::setPrimaryAccount,
                                 onRename = { renameTarget = it },
@@ -548,8 +551,8 @@ private fun OverviewTab(
     sleepStages: List<com.fitsync.data.db.SleepStageEntity>,
     syncing: Boolean,
     silent: Boolean = false,
-    /** 搬运 / 回填 / 导入写回在跑：刷新头停住转圈，提示「还在工作」 */
-    longTaskRunning: Boolean = false,
+    /** 搬运健康数据在跑：这期间用细线，列表保持可滑 */
+    copyHealthRunning: Boolean = false,
     message: String?,
     onSync: () -> Unit,
     onSeeAccounts: () -> Unit,
@@ -564,8 +567,8 @@ private fun OverviewTab(
         subtitle = SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date()),
         // 自动同步不转圈：页面一打开就转十几秒，很像卡死
         isRefreshing = syncing && !silent,
-        // 只有长任务才让刷新头停住；普通同步用细线，列表照常能滑
-        stopHeadWhileBusy = longTaskRunning,
+        // 只有搬运健康数据用细线；普通同步、回填、导入写回都用刷新头停住
+        stopHeadWhileBusy = !copyHealthRunning,
         onRefresh = onSync,
         listModifier = Modifier.testTag("dashboard"),
         actions = {
@@ -797,7 +800,7 @@ private fun AccountsTab(
     primaryAccountId: Long?,
     aliases: Map<Long, String>,
     syncing: Boolean,
-    longTaskRunning: Boolean = false,
+    copyHealthRunning: Boolean = false,
     onSync: () -> Unit,
     onSetPrimary: (Long) -> Unit,
     onRename: (AccountEntity) -> Unit,
@@ -815,7 +818,7 @@ private fun AccountsTab(
         title = "账号",
         subtitle = "两个区可互相同步，主账号决定首页以谁为准",
         isRefreshing = syncing,
-        stopHeadWhileBusy = longTaskRunning,
+        stopHeadWhileBusy = !copyHealthRunning,
         onRefresh = onSync,
         actions = {
             Text(
@@ -1389,35 +1392,51 @@ private fun SettingsTab(
     }
 
     if (showRetryConfirm) {
-        AlertDialog(
-            onDismissRequest = { showRetryConfirm = false },
-            title = { Text("立即重试同步？") },
-            text = {
-                Text(
-                    "只有在换过网络（流量 / 另一个 Wi-Fi），或者已经过了上面提示的恢复时间后再点。\n\n" +
-                        "如果账号仍在 Garmin 的锁定窗口里，这次重试会立刻再收到 429，冷却会从当前档位重新计时。"
-                )
+        // 与「搬运」「导入」共用同一套 Miuix 外壳：Material3 的弹窗过渡和按钮排布
+        // 跟 HyperOS 差得远，一弹出来就出戏
+        MiuixConfirmDialog(
+            title = "立即重试同步？",
+            message = "只有在换过网络（流量 / 另一个 Wi-Fi），或者已经过了上面提示的恢复时间后再点。\n\n" +
+                "如果账号仍在 Garmin 的锁定窗口里，这次重试会立刻再收到 429，冷却会从当前档位重新计时。",
+            confirmText = "仍然重试",
+            cancelText = "取消",
+            onConfirm = {
+                showRetryConfirm = false
+                onRetryAfterRateLimit()
             },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        showRetryConfirm = false
-                        onRetryAfterRateLimit()
-                    },
-                ) { Text("仍然重试") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showRetryConfirm = false }) { Text("取消") }
-            },
+            onDismiss = { showRetryConfirm = false },
         )
     }
 
     if (showDiagnostics) {
-        AlertDialog(
-            onDismissRequest = { showDiagnostics = false },
-            title = { Text("同步诊断") },
-            text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+        MiuixActionDialog(
+            title = "同步诊断",
+            confirmText = "复制",
+            cancelText = "关闭",
+            onConfirm = {
+                copyToClipboard(
+                    settingsContext,
+                    "FitSync 同步诊断",
+                    GarminDiagnostics.dump(),
+                )
+                showDiagnostics = false
+            },
+            onDismiss = { showDiagnostics = false },
+        ) {
+            // 诊断文本可能有几十行：放进浅色圆角块里限高滚动，
+            // 卡片不会顶到状态栏，也不会把「复制」按钮挤出去
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 380.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(MiuixGroupBg),
+            ) {
+                Column(
+                    modifier = Modifier
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                ) {
                     Text(
                         text = GarminDiagnostics.dump(),
                         fontSize = 12.sp,
@@ -1425,23 +1444,8 @@ private fun SettingsTab(
                         color = MiuixSummary,
                     )
                 }
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        copyToClipboard(
-                            settingsContext,
-                            "FitSync 同步诊断",
-                            GarminDiagnostics.dump(),
-                        )
-                        showDiagnostics = false
-                    },
-                ) { Text("复制") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDiagnostics = false }) { Text("关闭") }
-            },
-        )
+            }
+        }
     }
 }
 
