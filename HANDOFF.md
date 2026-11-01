@@ -1221,3 +1221,47 @@ Android 14 起 `dataSync` 必须单独声明 `FOREGROUND_SERVICE_DATA_SYNC`，�
 
 > 注意：`REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` 在 Google Play 上属于敏感权限（需说明用途）。
 > 本项目自签分发不受影响；若以后上架，改跳 `ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS` 列表页即可。
+
+## 二十七、长任务刷新头 / 搬运两天并行（1.14.15）
+
+### 1. 刷新头只在长任务时停住
+
+`HyperPage` 新增 `stopHeadWhileBusy`：
+
+| 场景 | `isRefreshing` | 表现 |
+| --- | --- | --- |
+| 普通同步 | true | 标题栏下沿 2dp 静止细线，列表可滑 |
+| 搬运 / 回填 / 导入写回 | true + `stopHeadWhileBusy` | `PullToRefresh` 进入 refreshing，刷新头停住转圈 |
+
+`SyncCoordinator` 新增 `longTaskRunning: StateFlow<Boolean>`，由 `launchLongTask`
+统一置位 / 复位（`job.invokeOnCompletion`），`cancelLongTask`、异常退出都会复位。
+概览页与账号页订阅它。代价：长任务期间这两个页面列表不能滑——此时用户一般在别的页面等。
+
+### 2. 搬运提速：两天并行
+
+`HealthSyncService` 把「搬一天」抽成 `copyOneDay()`，外层按 `PARALLEL_DAYS = 2`
+`async + awaitAll`。请求总数不变，只是把「等下载」与「等上传」重叠：
+
+| 参数 | 1.14.14 | 1.14.15 |
+| --- | --- | --- |
+| `PARALLEL_DAYS` | 1 | 2 |
+| `DAY_GAP_MS` | 1500 | 400 |
+| `UPLOAD_GAP_MS` | 1500 | 700 |
+| `MAX_DAYS_PER_SHARD` | 120 | 200 |
+| `SHARD_REST_MS` | 90s | 20s |
+| 一年期实测预估 | 约 55 分钟 | 约 25 分钟 |
+
+请求速率约 0.7 次/秒，仍在 Garmin 突发阈值内。
+
+### 3. 并行带来的两个并发问题（已修）
+
+- **`HealthCopyLedger.markCopied` 是读-改-写**：两个工人同时写会互相覆盖，
+  表现为「搬过的日期下一轮又重搬」——几百个白请求。加 `@Synchronized`（`entries` 同样）。
+- **取消不能被当成失败**：`copyOneDay` 里显式 `catch (CancellationException) { throw e }`，
+  否则原来 `runCatching` 会把「用户点停止」吞成「读取失败」。
+
+### 4. 其它
+
+- 429 时同组未开工的那天返回 `CANCELLED`，不计入进度；
+- 失败消息最多留 `MAX_MESSAGES = 20` 条，365 天全失败时不撑大结果对象；
+- 搬运页预估文案、风险弹窗的「约 55 分钟 / 分 4 片」同步改为「约 25 分钟 / 分 2 片」。

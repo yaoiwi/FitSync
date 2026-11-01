@@ -140,6 +140,9 @@ class HomeViewModel @Inject constructor(
     /** 同步/导入/复制的状态统一来自协调器，打开 App 时的自动同步也能在这里看到 */
     val syncState: StateFlow<SyncCoordinator.UiState> = syncCoordinator.state
 
+    /** 搬运 / 回填 / 导入写回是否在跑：长任务才让刷新头停住转圈 */
+    val longTaskRunning: StateFlow<Boolean> = syncCoordinator.longTaskRunning
+
     /** 设置页「同步记录」：跨账号按时间倒序 */
     val syncLogs: StateFlow<List<SyncLogEntity>> =
         repository.observeAllRecentSyncLogs(limit = 30)

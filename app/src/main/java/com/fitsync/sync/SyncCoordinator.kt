@@ -75,7 +75,25 @@ class SyncCoordinator @Inject constructor(
     private var lastProgressNotifyMs = 0L
     private var lastProgressNotifyDone = -1
 
+    private val _longTaskRunning = MutableStateFlow(false)
+
+    /**
+     * 搬运 / 回填 / 导入写回是否正在跑。
+     *
+     * 界面据此决定是否让下拉刷新头「停住转圈」：长任务动辄十几分钟，
+     * 用户更需要「它还在跑」的确认；短同步则只用一条静止细线，列表照常能滑。
+     */
+    val longTaskRunning: StateFlow<Boolean> = _longTaskRunning.asStateFlow()
+
     fun isLongTaskRunning(): Boolean = longTaskJob?.isActive == true
+
+    /** 统一登记长任务：置位状态流，任务结束（含取消、异常）自动复位 */
+    private fun launchLongTask(block: suspend CoroutineScope.() -> Unit) {
+        val job = scope.launch(block = block)
+        longTaskJob = job
+        _longTaskRunning.value = true
+        job.invokeOnCompletion { _longTaskRunning.value = false }
+    }
 
     /**
      * 通知栏「停止」的入口。
@@ -287,19 +305,19 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
             return
         }
-        longTaskJob = scope.launch {
-            if (_state.value.syncing) return@launch
+        launchLongTask {
+            if (_state.value.syncing) return@launchLongTask
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，现在回填只会一直撞 429",
                 )
-                return@launch
+                return@launchLongTask
             }
             val accounts = repository.observeEnabledAccounts().first()
                 .filter { it.sourceType == SourceType.GARMIN.code }
             if (accounts.isEmpty()) {
                 _state.value = UiState(syncing = false, message = "还没有可回填的 Garmin 账号")
-                return@launch
+                return@launchLongTask
             }
 
             // 回填一年 ≈ 半小时，必须先进前台：否则锁屏几分钟后网络就被 Doze 掐了
@@ -361,7 +379,7 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
             return
         }
-        longTaskJob = scope.launch {
+        launchLongTask {
             // 导入本身（解压 + 解析几千天）就可能跑几分钟，写回还要更久，
             // 整段都放在前台服务里，锁屏不会把网络掐掉
             startLongTaskService("导入数据", "正在解析文件…")
@@ -396,7 +414,7 @@ class SyncCoordinator @Inject constructor(
                 if (targetAccountId == null || result.dates.isEmpty()) {
                     _state.value = UiState(syncing = false, message = importMessage)
                     finishLongTaskService("导入完成", importMessage)
-                    return@launch
+                    return@launchLongTask
                 }
 
                 // 写回目标账号：一天 1 个请求，比搬运省钱（搬运要额外下载原始包）
@@ -486,14 +504,14 @@ class SyncCoordinator @Inject constructor(
             _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
             return
         }
-        longTaskJob = scope.launch {
+        launchLongTask {
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再搬运",
                 )
-                return@launch
+                return@launchLongTask
             }
-            val pair = pickTwoAccounts("搬运") ?: return@launch
+            val pair = pickTwoAccounts("搬运") ?: return@launchLongTask
             val (from, to) = pair
             val label = "${labelOf(from)} → ${labelOf(to)}"
             // 一年期搬运要 55 分钟：进前台服务，锁屏后 Doze 不会把网络掐掉

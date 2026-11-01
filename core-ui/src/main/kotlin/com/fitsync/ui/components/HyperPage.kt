@@ -46,6 +46,14 @@ fun HyperPage(
     title: String,
     subtitle: String = "",
     isRefreshing: Boolean = false,
+    /**
+     * 忙碌时让下拉刷新头停住转圈。
+     *
+     * 只给长任务用（搬运 / 回填 / 导入写回，动辄十几分钟）：那时用户更需要
+     * 「它还在跑」的确认，也基本不会去翻列表。普通同步保持 false，
+     * 否则刷新头会抢走手势，同步期间列表滑不动。
+     */
+    stopHeadWhileBusy: Boolean = false,
     onRefresh: (() -> Unit)? = null,
     navigationIcon: (@Composable () -> Unit)? = null,
     actions: @Composable RowScope.() -> Unit = {},
@@ -114,6 +122,8 @@ fun HyperPage(
             }
         }
         Box(modifier = Modifier.fillMaxSize()) {
+            // 长任务期间才让刷新头停住；其余情况一律不进入 refreshing 态
+            val headStopped = stopHeadWhileBusy && isRefreshing
             if (onRefresh != null) {
                 // 官方 Miuix 下拉刷新：与顶部折叠动画共用 scrollBehavior。
                 //
@@ -122,7 +132,7 @@ fun HyperPage(
                 // 头部那个无限旋转动画还会让整页玻璃每帧重采样，掉帧很明显。
                 // 刷新中的状态改用下面那条静态细线表示——不动画、不抢手势。
                 PullToRefresh(
-                    isRefreshing = false,
+                    isRefreshing = headStopped,
                     onRefresh = onRefresh,
                     modifier = Modifier.fillMaxSize(),
                     topAppBarScrollBehavior = scrollBehavior,
@@ -133,7 +143,7 @@ fun HyperPage(
             } else {
                 list()
             }
-            if (isRefreshing) {
+            if (isRefreshing && !headStopped) {
                 // 同步中：顶栏下沿一条静态细线。不做位移动画，列表照常可以滑动
                 Box(
                     modifier = Modifier

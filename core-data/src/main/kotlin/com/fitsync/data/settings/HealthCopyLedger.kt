@@ -26,6 +26,9 @@ class HealthCopyLedger @Inject constructor(
     fun copiedDates(fromAccountId: Long, toAccountId: Long): Set<String> =
         entries(fromAccountId, toAccountId).keys
 
+    // 搬运现在两天并行，读-改-写必须串行，否则两个工人的写入会互相覆盖，
+    // 表现是「明明搬过，下一轮又重搬」——白白多打几百个请求。
+    @Synchronized
     fun markCopied(fromAccountId: Long, toAccountId: Long, date: String) {
         val now = System.currentTimeMillis()
         val merged = entries(fromAccountId, toAccountId)
@@ -41,6 +44,7 @@ class HealthCopyLedger @Inject constructor(
     }
 
     /** 读 `日期=时间戳` 形式的记录，自动丢掉过期项 */
+    @Synchronized
     private fun entries(from: Long, to: Long): Map<String, Long> {
         val now = System.currentTimeMillis()
         return prefs.getString(key(from, to), null)

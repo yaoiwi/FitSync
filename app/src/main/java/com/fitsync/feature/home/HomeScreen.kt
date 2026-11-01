@@ -166,6 +166,8 @@ fun HomeScreen(
         }
     }
     val syncState by viewModel.syncState.collectAsState()
+    // 长任务（搬运 / 回填 / 导入写回）运行中：概览页让刷新头停住转圈
+    val longTaskRunning by viewModel.longTaskRunning.collectAsState()
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
     var renameTarget by remember { mutableStateOf<AccountEntity?>(null) }
@@ -253,6 +255,7 @@ fun HomeScreen(
                                 sleepStages = sleepStages,
                                 syncing = syncState.syncing,
                                 silent = syncState.silent,
+                                longTaskRunning = longTaskRunning,
                                 message = syncState.message,
                                 onSync = viewModel::syncNow,
                                 onSeeAccounts = { tab = 2 },
@@ -270,6 +273,7 @@ fun HomeScreen(
                                 primaryAccountId = primaryAccountId,
                                 aliases = aliases,
                                 syncing = syncState.syncing,
+                                longTaskRunning = longTaskRunning,
                                 onSync = viewModel::syncNow,
                                 onSetPrimary = viewModel::setPrimaryAccount,
                                 onRename = { renameTarget = it },
@@ -544,6 +548,8 @@ private fun OverviewTab(
     sleepStages: List<com.fitsync.data.db.SleepStageEntity>,
     syncing: Boolean,
     silent: Boolean = false,
+    /** 搬运 / 回填 / 导入写回在跑：刷新头停住转圈，提示「还在工作」 */
+    longTaskRunning: Boolean = false,
     message: String?,
     onSync: () -> Unit,
     onSeeAccounts: () -> Unit,
@@ -558,6 +564,8 @@ private fun OverviewTab(
         subtitle = SimpleDateFormat("M月d日 EEEE", Locale.CHINA).format(Date()),
         // 自动同步不转圈：页面一打开就转十几秒，很像卡死
         isRefreshing = syncing && !silent,
+        // 只有长任务才让刷新头停住；普通同步用细线，列表照常能滑
+        stopHeadWhileBusy = longTaskRunning,
         onRefresh = onSync,
         listModifier = Modifier.testTag("dashboard"),
         actions = {
@@ -789,6 +797,7 @@ private fun AccountsTab(
     primaryAccountId: Long?,
     aliases: Map<Long, String>,
     syncing: Boolean,
+    longTaskRunning: Boolean = false,
     onSync: () -> Unit,
     onSetPrimary: (Long) -> Unit,
     onRename: (AccountEntity) -> Unit,
@@ -806,6 +815,7 @@ private fun AccountsTab(
         title = "账号",
         subtitle = "两个区可互相同步，主账号决定首页以谁为准",
         isRefreshing = syncing,
+        stopHeadWhileBusy = longTaskRunning,
         onRefresh = onSync,
         actions = {
             Text(
