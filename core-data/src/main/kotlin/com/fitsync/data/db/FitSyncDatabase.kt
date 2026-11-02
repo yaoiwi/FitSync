@@ -7,6 +7,15 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
+ * 当前 schema 版本。
+ *
+ * `@Database(version = ...)` 和备份恢复的校验（[com.fitsync.data.backup.DatabaseBackup]）
+ * 都读这一个常量。以前两处各写一个数字，v2→v3 只改了注解，结果备份恢复被自己的
+ * 校验拦住，任何本版本导出的备份都恢复不了。
+ */
+const val FITSYNC_DB_VERSION = 3
+
+/**
  * Room 数据库：19 张表统一纳入 `fitsync.db`（第 4 章）。
  *
  * - schema JSON 导出：模块 build 时在 `core-data/schemas/1/fitsync.db.json` 生成
@@ -35,7 +44,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         BodyMetricEntity::class,
         DeviceEntity::class,
     ],
-    version = 2,
+    version = FITSYNC_DB_VERSION,
     exportSchema = true,
 )
 @TypeConverters(Converters.StringTypeConverter::class, Converters.LongStringConverter::class)
@@ -53,6 +62,19 @@ abstract class FitSyncDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL(
                     "ALTER TABLE activity_samples ADD COLUMN speed_ms REAL NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
+        /**
+         * v2 → v3：`accounts` 增加 `sort_index`（账号页可手动排序）。
+         *
+         * 默认 0 时仍按 `added_at_ms DESC` 排，等于升级前的顺序，用户不动手就完全无感。
+         */
+        val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE accounts ADD COLUMN sort_index INTEGER NOT NULL DEFAULT 0"
                 )
             }
         }

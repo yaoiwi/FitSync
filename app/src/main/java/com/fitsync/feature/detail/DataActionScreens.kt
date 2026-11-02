@@ -29,6 +29,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
+import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.feature.home.HomeViewModel
 import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.GlassHost
@@ -49,6 +50,7 @@ import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
+import java.time.LocalDate
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -263,7 +265,7 @@ fun CopyActivitiesScreen(
             MiuixCard {
                 BulletLine("复制最近 10 条活动：跑步、骑行、健身等运动记录")
                 MiuixDivider(startIndent = 18)
-                BulletLine("心率、睡眠、步数等健康数据 Garmin 不开放写入接口，无法复制")
+                BulletLine("心率、睡眠、步数等健康数据不在这个入口，请用「搬运健康数据」")
                 MiuixDivider(startIndent = 18)
                 BulletLine("复制会在目标账号生成新记录，不可撤销")
             }
@@ -297,14 +299,14 @@ fun CopyActivitiesScreen(
 /**
  * 跨度对应的耗时预估。
  *
- * 按「一天约 3 个请求、每个请求 1.5 秒」估算，再算上 120 天一片的 90 秒休息。
- * 写出来是为了让用户在点之前就知道 365 天要等一小时，而不是点了以后以为卡死。
+ * 按「一天约 3 个请求、每个请求 1.5 秒」估算，再算上 200 天一片的 20 秒休息。
+ * 写出来是为了让用户在点之前就知道 365 天要等二三十分钟，而不是点了以后以为卡死。
  */
 private fun estimateLabel(days: Int): String = when {
     days <= 7 -> "约 30 秒、20 个请求"
     days <= 30 -> "约 2 分钟、90 个请求"
     days <= 90 -> "约 6 分钟、270 个请求"
-    else -> "约 25 分钟、1100 个请求，分 2 片自动续跑；期间通知栏显示进度，可锁屏或切到后台"
+    else -> "约 25 分钟、1100 个请求，分 2 片自动续跑；没被限流会自动提速，期间通知栏显示进度"
 }
 
 @Composable
@@ -327,6 +329,15 @@ fun CopyHealthScreen(
     val target = garminAccounts.firstOrNull { it.id != source?.id }
     val dayOptions = listOf(7, 30, 90, 365)
     val dayIndex = dayOptions.indexOf(copyDays).let { if (it < 0) 0 else it }
+
+    // 上一次搬运停在哪：跟着搬运状态变（消息一变就重读一次台账）
+    val progress = remember(syncState.syncing, syncState.message, source?.id, target?.id) {
+        viewModel.copyProgressOf(source?.id, target?.id)
+    }
+    val paceLabel = remember(syncState.syncing) { viewModel.copyPaceLabel() }
+    val remaining = progress?.let {
+        HealthCopyLedger.remainingDays(it.oldestDate, dayOptions[dayIndex], LocalDate.now())
+    }
 
     DataActionPage(
         title = "搬运健康数据",
@@ -355,6 +366,32 @@ fun CopyHealthScreen(
                         lineHeight = 17.sp,
                         color = MiuixSummary,
                     )
+                    Spacer(Modifier.height(6.dp))
+                    // 并发档位会随「连续多少天没被限流」自己变，说清楚它就不像玄学
+                    Text(
+                        text = paceLabel,
+                        fontSize = 11.5.sp,
+                        lineHeight = 16.sp,
+                        color = MiuixSummary.copy(alpha = 0.85f),
+                    )
+                    if (progress != null) {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = buildString {
+                                append("上次搬到 ").append(progress.oldestDate)
+                                append("（记着 ").append(progress.copiedDays).append(" 天）")
+                                if (remaining == null || remaining <= 0) {
+                                    append("，选中的这些天都搬过了")
+                                } else {
+                                    append("，选中的 ").append(dayOptions[dayIndex])
+                                    append(" 天里还有约 ").append(remaining).append(" 天要搬")
+                                }
+                            },
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = MiuixSummary,
+                        )
+                    }
                 }
             }
         }
@@ -363,7 +400,13 @@ fun CopyHealthScreen(
             MiuixCard {
                 BulletLine("和日常同步共用 Garmin 的请求配额：短时间内反复触发限流，账号会被锁 48 小时，期间所有同步都停")
                 MiuixDivider(startIndent = 18)
+                BulletLine("一天一个数据包，睡眠、压力、身体电量都在里面一起搬，不用单独操作")
+                MiuixDivider(startIndent = 18)
+                BulletLine("某天只有部分文件传上去时不算完成，这次不记账，再点一次会只补缺的那个（比如睡眠）")
+                MiuixDivider(startIndent = 18)
                 BulletLine("目标账号已有同一天的文件会跳过，不覆盖、不删除原有数据")
+                MiuixDivider(startIndent = 18)
+                BulletLine("源账号那天没戴表睡（包里没有睡眠文件）就搬不过去——只转发已有数据，不会凭空生成")
                 MiuixDivider(startIndent = 18)
                 BulletLine("目标账号必须已绑定并激活 wellness 设备，否则 Garmin 会拒绝（419）")
                 MiuixDivider(startIndent = 18)
@@ -451,9 +494,10 @@ fun CopyHealthScreen(
                 }
                 if (longSpan) {
                     Text(
-                        text = "本次约 25 分钟、约 1100 个请求，分 2 片自动续跑（两天并行）。" +
+                        text = "本次约 25 分钟、约 1100 个请求，分 2 片自动续跑（默认两天并行，" +
+                            "连续 20 天没被限流会自动提到三天，撞到 429 就退回一天）。" +
                             "开始后通知栏会有一条常驻进度，可以锁屏、切到别的应用，只要通知还在就还在搬；" +
-                            "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，再点一次接着搬。",
+                            "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，下次会从断点接着搬。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         color = MiuixSummary,

@@ -39,7 +39,10 @@ class SyncWorker(
             // 又变成"持续撞 429"，正是之前一直显示账号限制的原因之一
             if (entryPoint.rateLimitGate().isBlocked()) return Result.success()
 
-            val results = entryPoint.syncEngine().syncAll()
+            val batch = entryPoint.syncEngine().syncAll()
+            // 前台正在手动同步 / 搬运：这轮不排队也不重试，等下一个周期
+            if (batch.busy) return Result.success()
+            val results = batch.results
             val limited = results.firstOrNull { it.second.rateLimited }
             if (limited != null) {
                 entryPoint.rateLimitGate().noteRateLimited(limited.second.retryAfterMs)

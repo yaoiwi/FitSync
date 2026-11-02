@@ -10,6 +10,7 @@ import com.fitsync.data.network.GarminNetworkException
 import com.fitsync.data.network.GarminSsoClient
 import com.fitsync.data.network.StorableCredential
 import com.fitsync.data.network.isTokenFresh
+import com.fitsync.data.settings.CopyPacer
 import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.data.settings.RateLimitGate
 import kotlinx.coroutines.Dispatchers
@@ -48,6 +49,7 @@ class HealthSyncService @Inject constructor(
     private val ssoClient: GarminSsoClient,
     private val copyLedger: HealthCopyLedger,
     private val rateLimitGate: RateLimitGate,
+    private val pacer: CopyPacer,
 ) {
 
     data class Result(
@@ -55,6 +57,13 @@ class HealthSyncService @Inject constructor(
         val uploaded: Int = 0,
         /** 目标账号已有同样文件的天数（409） */
         val duplicateDays: Int = 0,
+        /**
+         * 一天里只有部分文件传上去的天数。
+         *
+         * 典型是 monitoring 成功、sleep 被拒：这天不算搬完，也不写搬运记录，
+         * 下次再点会重试——已成功的文件服务端 409 一闪而过，只补缺的那个。
+         */
+        val partiallyDone: Int = 0,
         /** 上传或读取失败的天数 */
         val failed: Int = 0,
         /** 源账号这天没有 wellness 包（没戴表/没同步） */
@@ -111,6 +120,7 @@ class HealthSyncService @Inject constructor(
                 if (skippedExisting > 0) add("目标账号这 $skippedExisting 天本地已有数据")
                 if (skippedCopied > 0) add("另外 $skippedCopied 天之前已经搬过")
                 if (duplicateDays > 0) add("$duplicateDays 天目标账号已有同样文件")
+                if (partiallyDone > 0) add("$partiallyDone 天只传上去一部分（缺的睡眠/压力等再点一次会补）")
                 if (noDataDays > 0) add("$noDataDays 天源账号没有数据")
             }
 
@@ -122,16 +132,23 @@ class HealthSyncService @Inject constructor(
             get() {
                 val base = when {
                     error != null -> "搬运失败：$error"
-                    uploaded == 0 && failed == 0 -> {
+                    uploaded == 0 && failed == 0 && partiallyDone == 0 -> {
                         val notes = skipNotes
                         when {
                             notes.isNotEmpty() -> "没有新日期可搬：" + notes.joinToString("，")
                             else -> messages.firstOrNull() ?: "源账号最近没有可搬运的健康数据"
                         }
                     }
-                    uploaded == 0 -> buildString {
+                    uploaded == 0 && partiallyDone == 0 -> buildString {
                         append("全部失败：")
                         append(messages.firstOrNull() ?: "$failed 天被拒绝")
+                    }
+                    uploaded == 0 -> buildString {
+                        // 一天都没完整搬成，但确实有文件进去了：不能说「全部失败」，
+                        // 否则用户会以为白跑一趟、然后立刻再点一次
+                        append("已传上去一部分：").append(partiallyDone).append(" 天各有文件未成功")
+                        messages.firstOrNull()?.let { append("。").append(it) }
+                        append("。再点一次会只补缺的那些")
                     }
                     else -> buildString {
                         append("已搬运 ").append(uploaded).append(" 天")
@@ -139,6 +156,7 @@ class HealthSyncService @Inject constructor(
                             append("（").append(datesLabel()).append("）")
                         }
                         if (failed > 0) append("，失败 ").append(failed).append(" 天")
+                        if (partiallyDone > 0) append("，").append(partiallyDone).append(" 天只传了一部分")
                         val notes = skipNotes
                         if (notes.isNotEmpty()) append("；").append(notes.joinToString("，"))
                         if (interrupted) append("。中途停止，再点一次会接着搬剩下的")
@@ -237,16 +255,29 @@ class HealthSyncService @Inject constructor(
 
         // 目标账号本地已有数据的日期先跳过：能省掉一次下载 + 一次上传，
         // 也减少碰撞限流的机会。真正是否重复由服务端 409 判定。
-        val targetDates = repository.observeDailySummaries(toAccountId).first()
+        val localDates = repository.observeDailySummaries(toAccountId).first()
             .filter { it.hasHealthData() }
             .map { it.date }
             .toSet()
+        // 「本地有日汇总」不等于「本地有睡眠」：目标账号可能只同步到步数、心率，
+        // 睡眠那一列是空的。只按日汇总跳过，这段缺失的睡眠就永远补不上。
+        // 所以再看一眼本地睡眠覆盖了哪些天：「汇总 + 睡眠」都在才敢整天跳过。
+        //
+        // 但账号完全没有睡眠数据时（从不戴表睡 / 设备不支持）不启用这条，
+        // 否则每次搬运都要把这些天重跑一遍，白打几百个请求。
+        val localSleepDates = runCatching {
+            repository.observeSleepSessions(toAccountId).first().map { sleepDateOf(it) }.toSet()
+        }.getOrDefault(emptySet())
+        val trustLocalDaily = localSleepDates.isNotEmpty()
+        val fullyPresent = { date: String ->
+            date in localDates && (!trustLocalDaily || date in localSleepDates)
+        }
         val copiedDates = copyLedger.copiedDates(fromAccountId, toAccountId)
         val wantedDates = (0 until span)
             .map { LocalDate.now().minusDays(it.toLong()).toString() }
-        val pending = wantedDates.filter { it !in targetDates && it !in copiedDates }
-        val skippedExisting = wantedDates.count { it in targetDates }
-        val skippedCopied = wantedDates.count { it !in targetDates && it in copiedDates }
+        val pending = wantedDates.filter { !fullyPresent(it) && it !in copiedDates }
+        val skippedExisting = wantedDates.count { fullyPresent(it) }
+        val skippedCopied = wantedDates.count { !fullyPresent(it) && it in copiedDates }
 
         if (pending.isEmpty()) {
             return@withContext Result(
@@ -265,6 +296,7 @@ class HealthSyncService @Inject constructor(
         var duplicateDays = 0
         var noDataDays = 0
         var failedDays = 0
+        var partialDays = 0
         var processedDays = 0
         var interrupted = false
         val uploadedDates = mutableListOf<String>()
@@ -277,79 +309,101 @@ class HealthSyncService @Inject constructor(
         // 有一天撞上 429，同组还没开工的那一天就不再发请求
         val stop = AtomicBoolean(false)
 
-        shardLoop@ for ((shardIndex, shard) in shards.withIndex()) {
-            if (shardIndex > 0) {
-                delay(SHARD_REST_MS)
-                if (rateLimitGate.isBlocked()) {
-                    interrupted = true
-                    messages += "第 ${shardIndex + 1} 片开始前仍在冷却，已停止"
-                    break@shardLoop
-                }
-            }
-            // 两天一组并行：一天里的「下载 zip」和「上传 FIT」等待时间互相重叠，
-            // 请求总数不变、墙钟时间接近减半。再往上加会在同一账号上形成突发流量，
-            // 更容易触发 429——那是 48 小时锁定，比慢一点亏得多。
-            for (group in shard.chunked(PARALLEL_DAYS)) {
-                if (stop.get()) break@shardLoop
-                val outcomes = coroutineScope {
-                    group.map { date ->
-                        async {
-                            if (stop.get()) {
-                                DayOutcome(date, DayOutcome.Kind.CANCELLED)
-                            } else {
-                                copyOneDay(
-                                    date = date,
-                                    fromRegion = fromRegion,
-                                    sourceToken = sourceCredential.accessToken,
-                                    toRegion = toRegion,
-                                    target = targetCredential,
-                                )
-                            }
-                        }
-                    }.awaitAll()
-                }
-                for (day in outcomes) {
-                    when (day.kind) {
-                        DayOutcome.Kind.UPLOADED -> {
-                            uploadedDays++
-                            uploadedDates += day.date
-                            copyLedger.markCopied(fromAccountId, toAccountId, day.date)
-                        }
-                        DayOutcome.Kind.DUPLICATE -> {
-                            // 409 也算搬完了：目标账号本来就有这天的文件
-                            duplicateDays++
-                            uploadedDates += day.date
-                            copyLedger.markCopied(fromAccountId, toAccountId, day.date)
-                        }
-                        DayOutcome.Kind.NO_DATA -> noDataDays++
-                        DayOutcome.Kind.FAILED -> {
-                            failedDays++
-                            if (messages.size < MAX_MESSAGES) messages += day.message
-                            if (day.message.contains("419") && messages.size < MAX_MESSAGES) {
-                                messages += "419 表示目标账号没有活跃的 wellness 设备：先在手机 Garmin Connect " +
-                                    "打开一次设备页、确认能看到步数，再回来重试"
-                            }
-                        }
-                        DayOutcome.Kind.RATE_LIMITED -> {
-                            failedDays++
-                            rateLimited = true
-                            stop.set(true)
-                            messages += day.message
-                        }
-                        DayOutcome.Kind.CANCELLED -> Unit
+        try {
+            shardLoop@ for ((shardIndex, shard) in shards.withIndex()) {
+                if (shardIndex > 0) {
+                    delay(SHARD_REST_MS)
+                    if (rateLimitGate.isBlocked()) {
+                        interrupted = true
+                        messages += "第 ${shardIndex + 1} 片开始前仍在冷却，已停止"
+                        break@shardLoop
                     }
-                    // 被取消的那天没发过请求，不该计入进度
-                    if (day.kind == DayOutcome.Kind.CANCELLED) continue
-                    processedDays++
-                    onProgress?.invoke(processedDays, pending.size)
                 }
-                if (rateLimited) break@shardLoop
+                // 并行几天由 [CopyPacer] 动态决定：起步 2 天（已验证安全），
+                // 连续 20 天没被限流就提到 3 天，撞到 429 立刻退回 1 天并重新攒。
+                // 每轮都重读，所以档位在一次搬运途中就能生效，不用等下个版本。
+                var offset = 0
+                while (offset < shard.size) {
+                    if (stop.get()) break@shardLoop
+                    val width = pacer.parallel
+                    val group = shard.subList(offset, minOf(offset + width, shard.size))
+                    offset += group.size
+                    // 同组内并行：一天里的「下载 zip」和「上传 FIT」等待时间互相重叠，
+                    // 请求总数不变、墙钟时间接近减半。
+                    val outcomes = coroutineScope {
+                        group.map { date ->
+                            async {
+                                if (stop.get()) {
+                                    DayOutcome(date, DayOutcome.Kind.CANCELLED)
+                                } else {
+                                    copyOneDay(
+                                        date = date,
+                                        fromRegion = fromRegion,
+                                        sourceToken = sourceCredential.accessToken,
+                                        toRegion = toRegion,
+                                        target = targetCredential,
+                                    )
+                                }
+                            }
+                        }.awaitAll()
+                    }
+                    for (day in outcomes) {
+                        when (day.kind) {
+                            DayOutcome.Kind.UPLOADED -> {
+                                uploadedDays++
+                                uploadedDates += day.date
+                                copyLedger.markCopied(fromAccountId, toAccountId, day.date)
+                                pacer.noteCleanDay()
+                            }
+                            DayOutcome.Kind.DUPLICATE -> {
+                                // 409 也算搬完了：目标账号本来就有这天的文件
+                                duplicateDays++
+                                uploadedDates += day.date
+                                copyLedger.markCopied(fromAccountId, toAccountId, day.date)
+                                pacer.noteCleanDay()
+                            }
+                            // 有文件进、有文件没进：不计入「已搬」，也不写记录，下次会重试这天
+                            DayOutcome.Kind.PARTIAL -> {
+                                partialDays++
+                                if (messages.size < MAX_MESSAGES) messages += day.message
+                            }
+                            DayOutcome.Kind.NO_DATA -> noDataDays++
+                            DayOutcome.Kind.FAILED -> {
+                                failedDays++
+                                if (messages.size < MAX_MESSAGES) messages += day.message
+                                if (day.message.contains("419") && messages.size < MAX_MESSAGES) {
+                                    messages += "419 表示目标账号没有活跃的 wellness 设备：先在手机 Garmin Connect " +
+                                        "打开一次设备页、确认能看到步数，再回来重试"
+                                }
+                            }
+                            DayOutcome.Kind.RATE_LIMITED -> {
+                                failedDays++
+                                rateLimited = true
+                                stop.set(true)
+                                // 被限流说明当前并发太高：退回 1 档，下次慢慢爬
+                                pacer.noteRateLimited()
+                                messages += day.message
+                            }
+                            DayOutcome.Kind.CANCELLED -> Unit
+                        }
+                        // 被取消的那天没发过请求，不该计入进度
+                        if (day.kind == DayOutcome.Kind.CANCELLED) continue
+                        processedDays++
+                        onProgress?.invoke(processedDays, pending.size)
+                    }
+                    if (rateLimited) break@shardLoop
+                }
             }
+        } finally {
+            // 记账在内存里攒着写：正常结束、撞限流提前退出、被「停止」取消，
+            // 都要把还没落盘的部分刷回去，否则最后十几天的记录下次会被重搬一遍
+            copyLedger.flush()
         }
 
         Result(
             uploaded = uploadedDays,
             duplicateDays = duplicateDays,
+            partiallyDone = partialDays,
             failed = failedDays,
             noDataDays = noDataDays,
             requestedDays = span,
@@ -387,7 +441,16 @@ class HealthSyncService @Inject constructor(
         val kind: Kind,
         val message: String = "",
     ) {
-        enum class Kind { UPLOADED, DUPLICATE, NO_DATA, FAILED, RATE_LIMITED, CANCELLED }
+        enum class Kind {
+            UPLOADED,
+            DUPLICATE,
+            /** 一天里有文件成功、有文件失败：不算搬完，也不写记录，下次重试 */
+            PARTIAL,
+            NO_DATA,
+            FAILED,
+            RATE_LIMITED,
+            CANCELLED,
+        }
     }
 
     /**
@@ -430,9 +493,12 @@ class HealthSyncService @Inject constructor(
             return DayOutcome(date, DayOutcome.Kind.NO_DATA, "$date：包内没有 FIT 文件")
         }
 
-        var dayOk = false
-        var dayDuplicate = false
-        var dayError = ""
+        // 关键：一天的 zip 里通常有好几个 FIT（monitoring / sleep / stress），
+        // 上传接口是按「文件」判重、也是按「文件」失败的，不是按天。
+        // 所以必须逐个记账——只要有一个没进去，这天就不能算搬完。
+        var okCount = 0
+        var dupCount = 0
+        val failures = mutableListOf<String>()
 
         for (fit in fits) {
             val outcome = connectClient.uploadActivityFileOutcome(
@@ -445,10 +511,11 @@ class HealthSyncService @Inject constructor(
                 fieldName = WELLNESS_FORM_FIELD,
             )
             when {
-                outcome.ok -> dayOk = true
-                outcome.duplicate -> dayDuplicate = true
+                outcome.ok -> okCount++
+                // 409：目标账号已有这个文件。别的文件该传还得传
+                outcome.duplicate -> dupCount++
                 else -> {
-                    dayError = outcome.errorText
+                    failures += "${fit.name}（${outcome.errorText.ifBlank { "HTTP ${outcome.code}" }}）"
                     if (outcome.code == 429) {
                         rateLimitGate.noteRateLimited()
                         return DayOutcome(date, DayOutcome.Kind.RATE_LIMITED, "$date：${limitNote()}")
@@ -460,15 +527,36 @@ class HealthSyncService @Inject constructor(
 
         delay(DAY_GAP_MS)
         return when {
-            dayOk -> DayOutcome(date, DayOutcome.Kind.UPLOADED)
-            dayDuplicate -> DayOutcome(date, DayOutcome.Kind.DUPLICATE)
+            // 全部收下（新增或已存在）才算这天完成，才可以写进搬运记录
+            failures.isEmpty() && okCount > 0 -> DayOutcome(date, DayOutcome.Kind.UPLOADED)
+            failures.isEmpty() -> DayOutcome(date, DayOutcome.Kind.DUPLICATE)
+            // 部分成功：常见于 monitoring 进去了、睡眠被拒。此时「不写记录」，
+            // 下次点搬运会再取一次这天——已成功的那个文件服务端返回 409 一闪而过，
+            // 真正重试的只有失败的那个。这是唯一能把缺失的睡眠补回来的方式。
+            okCount + dupCount > 0 -> DayOutcome(
+                date,
+                DayOutcome.Kind.PARTIAL,
+                "$date：${fits.size} 个文件里 ${failures.size} 个没传上（${failures.first()}），下次会重试",
+            )
             else -> DayOutcome(
                 date,
                 DayOutcome.Kind.FAILED,
-                "$date：${dayError.ifBlank { "上传未成功" }}",
+                "$date：${failures.firstOrNull() ?: "上传未成功"}",
             )
         }
     }
+
+    /**
+     * 睡眠归属哪一天：按醒来时间算。
+     *
+     * Garmin 把一夜睡眠记在「起床那天」（1 号晚上睡、2 号早上起 → 记 2 号），
+     * 用 endTimeMs 转本地日期与之一致。
+     */
+    private fun sleepDateOf(session: com.fitsync.data.db.SleepSessionEntity): String =
+        java.time.Instant.ofEpochMilli(session.endTimeMs)
+            .atZone(java.time.ZoneId.systemDefault())
+            .toLocalDate()
+            .toString()
 
     private fun limitNote(): String =
         "Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}，这段时间不要再重试"
@@ -511,14 +599,11 @@ class HealthSyncService @Inject constructor(
         const val MAX_COPY_DAYS = 730
 
         /**
-         * 同时处理几天。
+         * 同一天多个 FIT 之间的间隔。并行后整体密度已经翻倍，这里缩短到 0.7 秒
          *
-         * 2 天：请求速率约 0.7 次/秒，仍低于 Garmin 的突发阈值，但把「等下载」和
-         * 「等上传」重叠掉了，一年期搬运从 55 分钟降到 25 分钟上下。
+         * 同时处理几天不再写死：见 [CopyPacer]——起步 2 天，连续 20 天没被限流就提到 3 天，
+         * 撞一次 429 立刻退回 1 天。限流阈值每个账号都不一样，写死一个数字要么太慢、要么太冒险。
          */
-        const val PARALLEL_DAYS = 2
-
-        /** 同一天多个 FIT 之间的间隔。并行后整体密度已经翻倍，这里缩短到 0.7 秒 */
         const val UPLOAD_GAP_MS = 700L
 
         /** 不同日期之间的间隔（两天并行时各自计） */

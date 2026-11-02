@@ -10,6 +10,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import androidx.annotation.RequiresApi
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.fitsync.MainActivity
@@ -99,8 +100,40 @@ class LongTaskService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun goForeground(notification: Notification): Boolean = runCatching {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    /**
+     * Android 15 起，`dataSync` 类型的后台运行有配额（24 小时内累计 6 小时，跨 App 共享）。
+     *
+     * 配额用完后系统会回调这里。**必须**在几秒内退出前台并 stopSelf：不处理的话
+     * 系统直接抛 `RemoteServiceException`（"A foreground service of type dataSync
+     * did not stop within the given time"），进程当场崩溃，用户连「为什么停了」都看不到。
+     *
+     * 搬运一年的健康数据 + 回填历史 + 导入写回，反复中断续跑很容易累计到这条线。
+     * 停下来不是失败：台账已经记到断点，回到 App 再点一次会接着做。
+     */
+    @RequiresApi(Build.VERSION_CODES.VANILLA_ICE_CREAM)
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        coordinator.cancelLongTask(
+            reason = "系统的后台时长配额用完了（Android 15 对同步类服务的限制），任务已暂停。" +
+                "回到 App 再点一次会接着做，已完成的进度都保留",
+        )
+        runCatching {
+            notify(
+                buildNotification(
+                    title = "任务已暂停",
+                    text = "系统限制了后台运行时长。回到 App 再点一次会接着做，进度不会丢",
+                    done = null,
+                    total = null,
+                    ongoing = false,
+                ),
+            )
+        }
+        // DETACH：留下这条说明，用户切到别的 App 也能看到为什么停了
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_DETACH)
+        foreground = false
+        stopSelf()
+    }
+
+    private fun goForeground(notification: Notification): Boolean = runCatching {        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         } else {
             0

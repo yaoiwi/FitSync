@@ -1,0 +1,23 @@
+# FitSync 冷启动热路径（手工骨架）。
+#
+# 只声明类、不写方法签名：手写的 HSPL 行一旦签名对不上就会被静默丢弃，
+# 反而看不出问题。正式做法是加一个 :baselineprofile 模块用 Macrobenchmark
+# 跑真实启动轨迹，那份会带具体方法，覆盖也比手写准。
+#
+# AGP 会把这份文件编成 assets/dexopt/baseline.prof 打进 APK，
+# 由 profileinstaller 在安装 / 首次启动时提交给 ART 做 AOT 编译。
+
+# 进程入口
+Lcom/fitsync/FitSyncApp;
+Lcom/fitsync/MainActivity;
+
+# 首屏：首页与它的 ViewModel（冷启动最重的一段）
+Lcom/fitsync/feature/home/HomeScreenKt;
+Lcom/fitsync/feature/home/HomeViewModel;
+
+# 数据层：打开数据库 + Room 生成的实现类
+Lcom/fitsync/data/db/FitSyncDatabase_Impl;
+
+# Compose 运行时与宿主 View，几乎每个界面都要走
+Landroidx/compose/runtime/Recomposer;
+Landroidx/compose/ui/platform/AndroidComposeView;

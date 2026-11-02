@@ -28,7 +28,10 @@ object FitDataModule {
             FitSyncDatabase.DB_NAME,
         )
             // 显式迁移，绝不 destructive：升级不能把用户同步了几年的数据清掉
-            .addMigrations(FitSyncDatabase.MIGRATION_1_2)
+            .addMigrations(
+                FitSyncDatabase.MIGRATION_1_2,
+                FitSyncDatabase.MIGRATION_2_3,
+            )
             .build()
     }
 

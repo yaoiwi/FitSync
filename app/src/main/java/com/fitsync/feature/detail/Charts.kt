@@ -1,11 +1,11 @@
 package com.fitsync.feature.detail
 
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -43,7 +43,9 @@ fun RouteTrack(
         routes.filterIndexed { index, _ -> index % step == 0 || index == routes.lastIndex }
     }
 
-    Canvas(modifier = modifier) {
+    // drawWithCache：路径只在尺寸 / 采样点变化时重建一次。
+    // 原来放在 Canvas 的 draw lambda 里，每帧都 new 一个 Path 再把 400 个点走一遍。
+    modifier.drawWithCache {
         val minLat = points.minOf { it.lat }
         val maxLat = points.maxOf { it.lat }
         val minLng = points.minOf { it.lng }
@@ -69,16 +71,21 @@ fun RouteTrack(
             val o = toOffset(p.lat, p.lng)
             if (index == 0) path.moveTo(o.x, o.y) else path.lineTo(o.x, o.y)
         }
-        drawPath(
-            path = path,
-            color = color,
-            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round),
-        )
-        // 起终点
         val start = toOffset(points.first().lat, points.first().lng)
         val end = toOffset(points.last().lat, points.last().lng)
-        drawCircle(color = color, radius = 4.dp.toPx(), center = start)
-        drawCircle(color = color.copy(alpha = 0.45f), radius = 4.dp.toPx(), center = end)
+        val strokeWidth = 3.dp.toPx()
+        val dotRadius = 4.dp.toPx()
+
+        onDrawBehind {
+            drawPath(
+                path = path,
+                color = color,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+            )
+            // 起终点
+            drawCircle(color = color, radius = dotRadius, center = start)
+            drawCircle(color = color.copy(alpha = 0.45f), radius = dotRadius, center = end)
+        }
     }
 }
 
@@ -101,7 +108,8 @@ fun Sparkline(
     val maxV = sampled.max()
     val span = (maxV - minV).takeIf { it > 1e-4f } ?: 1f
 
-    Canvas(modifier = modifier) {
+    // 同样走 drawWithCache：折线 + 渐变填充的面积路径只算一次
+    modifier.drawWithCache {
         fun point(index: Int): Offset {
             val x = size.width * index / (sampled.size - 1).toFloat()
             val normalized = (sampled[index] - minV) / span
@@ -122,17 +130,19 @@ fun Sparkline(
             lineTo(0f, size.height)
             close()
         }
-        drawPath(
-            path = fill,
-            brush = Brush.verticalGradient(
-                listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.02f)),
-            ),
+        val strokeWidth = 2.dp.toPx()
+        val brush = Brush.verticalGradient(
+            listOf(color.copy(alpha = 0.22f), color.copy(alpha = 0.02f)),
         )
-        drawPath(
-            path = line,
-            color = color,
-            style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round),
-        )
+
+        onDrawBehind {
+            drawPath(path = fill, brush = brush)
+            drawPath(
+                path = line,
+                color = color,
+                style = Stroke(width = strokeWidth, cap = StrokeCap.Round),
+            )
+        }
     }
 }
 

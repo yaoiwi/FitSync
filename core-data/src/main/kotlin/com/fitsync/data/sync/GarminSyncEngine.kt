@@ -28,6 +28,7 @@ import javax.inject.Singleton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 
 /**
@@ -59,12 +60,50 @@ class GarminSyncEngine @Inject constructor(
         val retryAfterMs: Long? = null,
         /** 是否被 403 拒绝：不是限流，重试也不会好，后台任务不该再 retry */
         val forbidden: Boolean = false,
+        /** 另一个同步正在跑，本次一个请求都没发出去 */
+        val busy: Boolean = false,
+    )
+
+    /**
+     * 一轮 [syncAll] 的结果。
+     *
+     * 用独立类型而不是裸 List，是为了把「没同步」和「同步了 0 个账号」分开：
+     * 前者要提示用户稍后再试，后者才是「没有可同步的账号」。
+     */
+    data class SyncBatch(
+        val busy: Boolean,
+        val results: List<Pair<Long, SyncOutcome>>,
     )
 
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd")
     private val monthFormatter = DateTimeFormatter.ofPattern("yyyy-MM")
 
-    suspend fun syncAccount(accountId: Long, backfillDays: Int = 7): SyncOutcome =
+    /**
+     * 同步互斥。
+     *
+     * 后台 Worker 和前台手动同步是两个互不相干的入口：前者由 WorkManager 按周期唤起，
+     * 后者是用户点「同步」，各自 `scope.launch`。以前它们完全不知道对方存在，
+     * 自动同步正跑到一半时点「同步」，两路会同时打 Garmin——而 Garmin 判定的是
+     * 「同一账号短时间内第二次 429」，撞上就是 48 小时锁定，不是慢一点的事。
+     *
+     * 用进程内 Mutex 而不是 `sync_locks` 表：App 只有一个进程，数据库锁还要处理
+     * TTL、崩溃残留和跨进程可见性，代价远大于收益。抢不到锁就立刻返回，
+     * 不排队——让用户等一个几十秒的队列，不如直接告诉他「已经在同步了」。
+     */
+    private val syncMutex = Mutex()
+
+    suspend fun syncAccount(accountId: Long, backfillDays: Int = 7): SyncOutcome {
+        if (!syncMutex.tryLock()) {
+            return SyncOutcome(false, 0, "已经在同步了，等这一轮结束再试", busy = true)
+        }
+        return try {
+            syncAccountLocked(accountId, backfillDays)
+        } finally {
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncAccountLocked(accountId: Long, backfillDays: Int): SyncOutcome =
         withContext(Dispatchers.IO) {
             val account = repository.getAccount(accountId)
                 ?: return@withContext SyncOutcome(false, 0, "账号不存在")
@@ -448,6 +487,18 @@ class GarminSyncEngine @Inject constructor(
     suspend fun syncAll(
         backfillDays: Int = 7,
         primaryFirstId: Long? = null,
+    ): SyncBatch {
+        if (!syncMutex.tryLock()) return SyncBatch(busy = true, results = emptyList())
+        return try {
+            SyncBatch(busy = false, results = syncAllLocked(backfillDays, primaryFirstId))
+        } finally {
+            syncMutex.unlock()
+        }
+    }
+
+    private suspend fun syncAllLocked(
+        backfillDays: Int,
+        primaryFirstId: Long?,
     ): List<Pair<Long, SyncOutcome>> {
         val accounts = repository.observeEnabledAccounts().first()
             // 本地导入（SourceType.FILE）没有远端数据，不参与同步
@@ -457,7 +508,8 @@ class GarminSyncEngine @Inject constructor(
         val results = mutableListOf<Pair<Long, SyncOutcome>>()
         accounts.forEachIndexed { index, account ->
             if (index > 0) delay(ACCOUNT_GAP_MS)
-            val outcome = syncAccount(account.id, backfillDays)
+            // 已经在 syncAll 的锁里，直接走不加锁的版本，否则自己会把自己拦住
+            val outcome = syncAccountLocked(account.id, backfillDays)
             results += account.id to outcome
             // 一个账号被限流，另一个账号此刻发请求也只会再被拒一次，
             // 而且会让冷却窗口继续延长——直接收手

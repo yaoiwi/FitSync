@@ -16,8 +16,8 @@ android {
         applicationId = "com.fitsync.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 87
-        versionName = "1.5.1"
+        versionCode = 92
+        versionName = "1.5.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -123,6 +123,10 @@ dependencies {
 
     // WorkManager（定时同步）
     implementation(libs.work.runtime.ktx)
+
+    // Baseline Profile：把 src/main/baseline-prof.txt 在安装时提交给 ART。
+    // 没有它，profile 只会躺在 APK 的 assets 里没人读，冷启动一点不会变快。
+    implementation(libs.profileinstaller)
 
     // 单测（JVM 级冒烟测试：Room + Compose 渲染）
     testImplementation(libs.junit)

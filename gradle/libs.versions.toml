@@ -61,6 +61,9 @@ kotlinx-coroutines-test = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-t
 # WorkManager
 work-runtime-ktx = { module = "androidx.work:work-runtime-ktx", version = "2.9.0" }
 
+# Baseline Profile：安装 / 首次启动时把启动热路径 AOT 编译掉
+profileinstaller = { module = "androidx.profileinstaller:profileinstaller", version = "1.4.1" }
+
 # Network & Crypto
 okhttp = { module = "com.squareup.okhttp3:okhttp", version = "4.12.0" }
 okhttp-mockwebserver = { module = "com.squareup.okhttp3:mockwebserver", version = "4.12.0" }

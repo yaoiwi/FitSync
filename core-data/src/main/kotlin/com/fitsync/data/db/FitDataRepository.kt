@@ -15,6 +15,8 @@ interface FitDataRepository {
 
     // ==================== 账号域 ====================
     fun observeEnabledAccounts(): Flow<List<AccountEntity>>
+    /** 账号页排序：按给定顺序把 `sort_index` 重写为 1..n，顺序变化会立刻反映到所有列表 */
+    suspend fun reorderAccounts(orderedIds: List<Long>)
     suspend fun getAccount(accountId: Long): AccountEntity?
     suspend fun getAccountByUniqueKey(
         sourceType: String,
@@ -47,6 +49,13 @@ interface FitDataRepository {
 
     // ==================== 运动域 ====================
     fun observeActivities(accountId: Long): Flow<List<ActivityEntity>>
+    /**
+     * 只要 [sinceMs] 之后的活动。
+     *
+     * 趋势图只画 30 天，却曾经读整张表的全部历史再在内存里筛——数据攒到一两年后，
+     * 每次首页可见都要搬几千行出来。这个查询走 `(account_id, start_time_ms)` 索引。
+     */
+    fun observeActivitiesSince(accountId: Long, sinceMs: Long): Flow<List<ActivityEntity>>
     fun observeRecentActivities(limit: Int): Flow<List<ActivityEntity>>
     /** 某个账号的活动总数；[accountId] 为 null 表示没有账号，返回 0 */
     fun observeActivityCount(accountId: Long?): Flow<Int>
@@ -66,6 +75,8 @@ interface FitDataRepository {
 
     // ==================== 健康域 ====================
     fun observeDailySummaries(accountId: Long): Flow<List<DailySummaryEntity>>
+    /** 只要 [sinceDate]（`yyyy-MM-dd`，含）之后的日汇总 */
+    fun observeDailySummariesSince(accountId: Long, sinceDate: String): Flow<List<DailySummaryEntity>>
     /** 跨账号的最新一天汇总（首页概览用） */
     fun observeLatestDailySummary(): Flow<DailySummaryEntity?>
 
@@ -97,6 +108,8 @@ interface FitDataRepository {
         dates: List<String>,
     ): List<DailySummaryEntity>
     fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>>
+    /** 只要 [sinceMs] 之后开始的睡眠（趋势图用） */
+    fun observeSleepSessionsSince(accountId: Long, sinceMs: Long): Flow<List<SleepSessionEntity>>
     fun observeLatestSleep(): Flow<SleepSessionEntity?>
     suspend fun upsertSleepSession(session: SleepSessionEntity): Long
     suspend fun getSleepSessionByExternalId(accountId: Long, externalId: String): SleepSessionEntity?

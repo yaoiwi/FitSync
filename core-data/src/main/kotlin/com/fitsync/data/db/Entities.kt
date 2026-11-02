@@ -30,6 +30,13 @@ data class AccountEntity(
     @ColumnInfo(name = "status") val status: String = AccountStatus.NORMAL.code,
     @ColumnInfo(name = "enabled") val enabled: Boolean = true,
     @ColumnInfo(name = "added_at_ms") val addedAtMs: Long = 0,
+    /**
+     * 账号页的显示顺序，由用户在「排序」模式下调整。
+     *
+     * 0 表示「没排过」：新加的账号默认 0，配合次级排序 `added_at_ms DESC` 会出现在最前面，
+     * 与调整前的行为一致；用户排过一次之后写入 1..n，之后的账号顺序就稳定了。
+     */
+    @ColumnInfo(name = "sort_index", defaultValue = "0") val sortIndex: Int = 0,
     @ColumnInfo(name = "last_sync_at_ms") val lastSyncAtMs: Long = 0,
     @ColumnInfo(name = "token_expires_at_ms") val tokenExpiresAtMs: Long = 0,
 )

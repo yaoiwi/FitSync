@@ -117,14 +117,17 @@ class SyncCoordinator @Inject constructor(
      *
      * 取消只影响这一次任务：`delay` 与 `withContext` 都是可取消的，
      * 已写进 Garmin 的数据不会回滚（本来也没有删除接口）。
+     *
+     * [reason] 给系统配额用尽这类「不是用户点的停止」留一个说明，否则界面会显示
+     * 「已停止」，用户以为自己误触了。
      */
-    fun cancelLongTask() {
+    fun cancelLongTask(reason: String? = null) {
         val job = longTaskJob
         if (job?.isActive != true) return
         job.cancel()
         _state.value = UiState(
             syncing = false,
-            message = "已停止：已完成的进度都保留，再点一次会接着做",
+            message = reason ?: "已停止：已完成的进度都保留，再点一次会接着做",
         )
     }
 
@@ -262,7 +265,7 @@ class SyncCoordinator @Inject constructor(
             silent = !manual,
         )
 
-        val results = runCatching {
+        val batch = runCatching {
             syncEngine.syncAll(primaryFirstId = primaryAccountStore.primaryAccountId.value)
         }.getOrElse { error ->
             _state.value = UiState(
@@ -272,6 +275,17 @@ class SyncCoordinator @Inject constructor(
             )
             return
         }
+
+        // 后台 Worker 或另一个入口正在同步：这次一个请求都没发出去。
+        // 不能说「已同步 0 条」，那看起来像账号没数据。
+        if (batch.busy) {
+            _state.value = UiState(
+                syncing = false,
+                message = if (manual) "已经在同步了，等这一轮结束再看" else null,
+            )
+            return
+        }
+        val results = batch.results
 
         val records = results.sumOf { it.second.records }
         val failed = results.filter { !it.second.ok }
@@ -487,32 +501,39 @@ class SyncCoordinator @Inject constructor(
     }
 
     fun copyActivitiesToOtherAccount() {
-        scope.launch {
+        if (isLongTaskRunning()) {
+            _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
+            return
+        }
+        launchLongTask {
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
                     message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，稍后再复制",
                 )
-                return@launch
+                return@launchLongTask
             }
-            val pair = pickTwoAccounts("复制活动") ?: return@launch
+            val pair = pickTwoAccounts("复制活动") ?: return@launchLongTask
             val (from, to) = pair
-            _state.value = UiState(
-                syncing = true,
-                message = "正在复制活动：${labelOf(from)} → ${labelOf(to)}…",
-            )
-            val result = runCatching { activityCopyService.copyRecent(from.id, to.id) }
-                .getOrElse { e ->
-                    _state.value = UiState(
-                        syncing = false,
-                        message = "复制失败：${e.message ?: e.javaClass.simpleName}",
-                    )
-                    return@launch
-                }
-            _state.value = UiState(
-                syncing = false,
-                message = "${labelOf(from)} → ${labelOf(to)}：${result.summary}" +
-                    if (result.messages.isNotEmpty()) "（${result.messages.first()}）" else "",
-            )
+            val label = "${labelOf(from)} → ${labelOf(to)}"
+            // 复制 10 条活动是「下载 FIT + 上传 FIT」×10，锁屏后照样会被 Doze 掐网；
+            // 而且它和搬运一样在打 Garmin，必须走同一个长任务通道，不能另开一路
+            startLongTaskService("复制活动", "准备中：$label")
+            _state.value = UiState(syncing = true, message = "正在复制活动：$label…")
+            try {
+                val result = withCpuAwake { activityCopyService.copyRecent(from.id, to.id) }
+                val text = "$label：${result.summary}" +
+                    if (result.messages.isNotEmpty()) "（${result.messages.first()}）" else ""
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("复制活动完成", text)
+            } catch (e: CancellationException) {
+                // 通知栏「停止」：已经传上去的活动留在对方账号里，没有删除接口
+                finishLongTaskService("复制活动已停止", "已复制的活动不会回滚")
+                throw e
+            } catch (e: Exception) {
+                val text = "复制失败：${e.message ?: e.javaClass.simpleName}"
+                _state.value = UiState(syncing = false, message = text)
+                finishLongTaskService("复制活动失败", text)
+            }
         }
     }
 
@@ -564,6 +585,12 @@ class SyncCoordinator @Inject constructor(
                         append("\n在目标账号下同步一次，首页就能看到这几天")
                         // 上传没有删除接口，必须在用户还没后悔时就说明出口
                         append("\n想撤销只能到 Garmin Connect 网页端逐条删除这些记录")
+                    }
+                    // 部分成功的那几天没有写搬运记录，再点一次会自动重试；
+                    // 已成功的文件服务端返回 409 直接跳过，不会再占配额
+                    if (result.partiallyDone > 0) {
+                        append("\n有 ").append(result.partiallyDone)
+                            .append(" 天只传上去一部分（通常是睡眠被拒），再点一次搬运会自动补上")
                     }
                 }
                 _state.value = UiState(syncing = false, message = text)

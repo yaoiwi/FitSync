@@ -13,6 +13,8 @@ import com.fitsync.data.db.SleepStageEntity
 import com.fitsync.data.db.SyncLogEntity
 import com.fitsync.data.exporter.DataExporter
 import com.fitsync.data.settings.AccountAliasStore
+import com.fitsync.data.settings.CopyPacer
+import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.data.settings.PrimaryAccountStore
 import com.fitsync.sync.SyncCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -24,6 +26,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -50,7 +53,23 @@ class HomeViewModel @Inject constructor(
     private val aliasStore: AccountAliasStore,
     private val exporter: DataExporter,
     private val databaseBackup: DatabaseBackup,
+    private val copyLedger: HealthCopyLedger,
+    private val copyPacer: CopyPacer,
 ) : ViewModel() {
+
+    /**
+     * 账号表的唯一订阅。
+     *
+     * 之前 [accounts]、[accountsLoaded]、[effectivePrimaryId] 各自 `observeEnabledAccounts()`，
+     * 同一条 SQL 每次变更要跑三遍、三条 Flow 各自唤醒。这里收成一条共享流：
+     * 用 `null` 当「还没读出来」的哨兵，下游再派生成列表与「已加载」标志。
+     */
+    private val accountRows: StateFlow<List<AccountEntity>?> = repository.observeEnabledAccounts()
+        .map<List<AccountEntity>, List<AccountEntity>?> { it }
+        // 查询出错就退回空列表：宁可显示「还没有账号」，也不能让 accountsLoaded 永远是 false
+        // —— 那会让首帧一直卡在加载态，连「添加账号」都进不去
+        .catch { emit(emptyList()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     /**
      * 用 StateFlow 而不是裸 Flow：
@@ -58,7 +77,8 @@ class HomeViewModel @Inject constructor(
      *   的 LocalLifecycleOwner 不兼容问题；
      * - 屏幕离开 5 秒后停止上游查询。
      */
-    val accounts: StateFlow<List<AccountEntity>> = repository.observeEnabledAccounts()
+    val accounts: StateFlow<List<AccountEntity>> = accountRows
+        .map { it.orEmpty() }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -67,9 +87,8 @@ class HomeViewModel @Inject constructor(
      * 冷启动时 [accounts] 的初始值是空列表，界面会先渲染"还没有账号"，等 Room 查完再切回主页，
      * 看起来就像"打开先进了添加账号页"。用这个标志把首帧挡掉，等结果回来再决定显示什么。
      */
-    val accountsLoaded: StateFlow<Boolean> = repository.observeEnabledAccounts()
-        .map { true }
-        .catch { emit(true) }
+    val accountsLoaded: StateFlow<Boolean> = accountRows
+        .map { it != null }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     data class Dashboard(
@@ -100,8 +119,9 @@ class HomeViewModel @Inject constructor(
      */
     private val effectivePrimaryId: Flow<Long?> = combine(
         primaryAccountStore.primaryAccountId,
-        repository.observeEnabledAccounts(),
-    ) { primary, accounts -> primary ?: accounts.firstOrNull()?.id }
+        // 复用同一条账号流，不再单独订阅一次 observeEnabledAccounts()
+        accountRows,
+    ) { primary, accounts -> primary ?: accounts?.firstOrNull()?.id }
 
     /**
      * 首页数据：健康汇总取主账号优先、缺失由另一区补齐；活动与计数只按 [effectivePrimaryId]。
@@ -212,6 +232,10 @@ class HomeViewModel @Inject constructor(
      * 近 30 天趋势（UI 再按 7/30 截取）。
      *
      * 只取主账号：两个区的日汇总按日期可能各有一份，混在一起会把同一天算两次。
+     *
+     * 查询带时间范围：以前三个 `observe*` 都是整表读出来再在内存里筛 30 天，
+     * 攒到一两年数据后每次进首页都要搬几千行。现在交给 SQLite 走索引，
+     * 多留 2 天余量，跨时区的深夜活动/睡眠不会因为边界被切掉。
      */
     @OptIn(ExperimentalCoroutinesApi::class)
     val trends: StateFlow<Trends> = effectivePrimaryId
@@ -219,10 +243,12 @@ class HomeViewModel @Inject constructor(
             if (primaryId == null) {
                 flowOf(Trends())
             } else {
+                val sinceDate = LocalDate.now().minusDays(TREND_LOOKBACK_DAYS.toLong())
+                val sinceMs = sinceDate.atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
                 combine(
-                    repository.observeDailySummaries(primaryId),
-                    repository.observeSleepSessions(primaryId),
-                    repository.observeActivities(primaryId),
+                    repository.observeDailySummariesSince(primaryId, sinceDate.toString()),
+                    repository.observeSleepSessionsSince(primaryId, sinceMs),
+                    repository.observeActivitiesSince(primaryId, sinceMs),
                 ) { daily, sleep, activities ->
                     buildTrends(daily, sleep, activities)
                 }
@@ -313,7 +339,33 @@ class HomeViewModel @Inject constructor(
     fun copyHealthToOtherAccount() =
         syncCoordinator.copyHealthToOtherAccount(syncCoordinator.copyHealthDays.value)
 
+    /**
+     * 上一次搬运停在哪（最老的一天）。
+     *
+     * 搬运页用它告诉用户「这次会从哪天接着往前搬」，而不是笼统地说「再点一次会接着做」——
+     * 一年期搬运要中断好几次，用户根本不知道断点在哪。
+     */
+    fun copyProgressOf(fromAccountId: Long?, toAccountId: Long?): HealthCopyLedger.Progress? {
+        if (fromAccountId == null || toAccountId == null) return null
+        return copyLedger.progress(fromAccountId, toAccountId)
+    }
+
+    /** 当前并发档位的一句话说明（自适应提速的解释） */
+    fun copyPaceLabel(): String = copyPacer.label()
+
     fun setPrimaryAccount(accountId: Long) = primaryAccountStore.setPrimary(accountId)
+
+    /**
+     * 账号页拖动排序：整表按 [ids] 的新顺序重写 `sort_index`。
+     *
+     * 不交换两行的值，而是整表写成 1..n：从没排过时所有值都是 0，
+     * 交换两个 0 等于什么都没做，只有整表重写才能得到确定顺序。
+     * 拖动过程中 UI 只改本地顺序，松手才调这里落库一次，避免拖动卡顿。
+     */
+    fun reorderAccounts(ids: List<Long>) {
+        if (ids.isEmpty()) return
+        viewModelScope.launch { repository.reorderAccounts(ids) }
+    }
 
     /** 传空字符串表示恢复 Garmin 原昵称 */
     fun renameAccount(accountId: Long, nickname: String) =
@@ -363,5 +415,15 @@ class HomeViewModel @Inject constructor(
             aliasStore.setAlias(accountId, "")
             if (wasPrimary) primaryAccountStore.clear()
         }
+    }
+
+    private companion object {
+        /**
+         * 趋势查询往前读多少天。
+         *
+         * 图上画 30 天，多读 2 天是为了兜住边界：按 `start_time_ms` 筛的活动/睡眠
+         * 若刚好落在窗口第一天的凌晨（时区差），少读一天就会缺柱子。
+         */
+        const val TREND_LOOKBACK_DAYS = 32
     }
 }

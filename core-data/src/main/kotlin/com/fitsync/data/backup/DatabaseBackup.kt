@@ -2,6 +2,7 @@ package com.fitsync.data.backup
 
 import android.content.Context
 import android.net.Uri
+import com.fitsync.data.db.FITSYNC_DB_VERSION
 import com.fitsync.data.db.FitSyncDatabase
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
@@ -62,15 +63,19 @@ class DatabaseBackup @Inject constructor(
             error("文件是空的")
         }
         val version = RestoreHelper.schemaVersion(pending)
-        if (version !in 1..CURRENT_SCHEMA) {
+        // 旧备份要放行：Room 打开时会依次跑 MIGRATION_1_2、MIGRATION_2_3。
+        // 但 schema 比当前新必须挡住——那是更晚的版本导出的，本机没有降级迁移，
+        // 直接打开只会得到一堆「no such column」。
+        if (version !in 1..FITSYNC_DB_VERSION) {
             pending.delete()
-            error("这不是有效的 FitSync 备份（schema=$version）")
+            error(
+                if (version > FITSYNC_DB_VERSION) {
+                    "备份来自更新的 FitSync（schema $version，本机只到 $FITSYNC_DB_VERSION），请先升级"
+                } else {
+                    "这不是有效的 FitSync 备份"
+                },
+            )
         }
-    }
-
-    private companion object {
-        /** 与 FitSyncDatabase 的 @Database(version = 2) 保持一致 */
-        const val CURRENT_SCHEMA = 2
     }
 }
 
@@ -99,11 +104,32 @@ object RestoreHelper {
             .onFailure { android.util.Log.w("RestoreHelper", "恢复数据库失败", it) }
     }
 
-    /** 读 SQLite 文件头：偏移 60 处的 4 字节大端整数就是 schema 版本 */
+    /**
+     * 读 SQLite 文件头里的 `user_version`（偏移 60，4 字节**大端**），Room 就把它当 schema 版本写。
+     *
+     * 这里踩过一次坑：早先多绕了一圈 [Integer.reverseBytes]，把 3 读成 50331648，
+     * 直到校验常量换成 `FITSYNC_DB_VERSION` 才暴露——用户手上的备份一律被自己的校验拒掉。
+     * SQLite 文件头所有整数都是大端，直接 `readInt()` 就是正确值，不要再反转。
+     *
+     * 顺手校验魔数：随便挑个文件进来读出的四字节很可能落在 1..3 之间，
+     * 放过去会在下次启动时把库覆盖成一堆垃圾。
+     */
     fun schemaVersion(file: File): Int = runCatching {
         RandomAccessFile(file, "r").use { raf ->
+            if (raf.length() < SQLITE_HEADER_SIZE) return@use INVALID_SCHEMA
+            val magic = ByteArray(SQLITE_MAGIC.size)
+            raf.readFully(magic)
+            if (!magic.contentEquals(SQLITE_MAGIC)) return@use INVALID_SCHEMA
             raf.seek(60)
-            Integer.reverseBytes(raf.readInt())
+            raf.readInt()
         }
-    }.getOrDefault(-1)
+    }.getOrDefault(INVALID_SCHEMA)
+
+    /** 不是 SQLite 文件、或读不出来 */
+    const val INVALID_SCHEMA = -1
+
+    private val SQLITE_MAGIC = "SQLite format 3\u0000".toByteArray(Charsets.US_ASCII)
+
+    /** 100 字节文件头，少于此长度不可能是库 */
+    private const val SQLITE_HEADER_SIZE = 100L
 }

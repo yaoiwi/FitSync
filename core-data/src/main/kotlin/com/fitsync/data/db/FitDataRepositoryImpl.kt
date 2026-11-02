@@ -1,5 +1,6 @@
 package com.fitsync.data.db
 
+import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -33,9 +34,23 @@ class FitDataRepositoryImpl @Inject constructor(
     private val bodyDao get() = db.bodyMetricDao()
     private val deviceDao get() = db.deviceDao()
 
+    /** 只用来决定「这次要不要顺手清日志」，不需要精确 */
+    private val logWrites = java.util.concurrent.atomic.AtomicInteger(0)
+
     // ==================== 账号域 ====================
     override fun observeEnabledAccounts(): Flow<List<AccountEntity>> =
         accountDao.observeEnabledAll()
+
+    /**
+     * 排序必须在一个事务里写完：中途被打断会留下重复的 `sort_index`，
+     * 列表顺序就会变成「谁先查出来谁在前」的随机态。
+     */
+    override suspend fun reorderAccounts(orderedIds: List<Long>) {
+        if (orderedIds.isEmpty()) return
+        db.withTransaction {
+            orderedIds.forEachIndexed { index, id -> accountDao.updateSortIndex(id, index + 1) }
+        }
+    }
 
     override suspend fun getAccount(accountId: Long) =
         accountDao.getById(accountId)
@@ -89,8 +104,16 @@ class FitDataRepositoryImpl @Inject constructor(
     override suspend fun upsertSyncTask(task: SyncTaskEntity): Long =
         taskDao.upsert(task)
 
-    override suspend fun insertSyncLog(log: SyncLogEntity): Long =
-        logDao.insert(log)
+    override suspend fun insertSyncLog(log: SyncLogEntity): Long {
+        val id = logDao.insert(log)
+        // 每写 20 条顺手清一次：一天 24 次自动同步、一年也就几千条，
+        // 但不清的话「同步记录」页会越来越慢，备份文件也跟着白白变大。
+        // 只留 30 天——足够回答「上周为什么没同步上」，再老的没人看。
+        if (logWrites.incrementAndGet() % LOG_PRUNE_EVERY == 0) {
+            logDao.cleanBefore(System.currentTimeMillis() - LOG_RETENTION_MS)
+        }
+        return id
+    }
 
     override fun observeRecentSyncLogs(accountId: Long): Flow<List<SyncLogEntity>> =
         logDao.observeRecent(accountId)
@@ -119,6 +142,9 @@ class FitDataRepositoryImpl @Inject constructor(
     // ==================== 运动域 ====================
     override fun observeActivities(accountId: Long): Flow<List<ActivityEntity>> =
         activityDao.observeByAccount(accountId)
+
+    override fun observeActivitiesSince(accountId: Long, sinceMs: Long): Flow<List<ActivityEntity>> =
+        activityDao.observeSince(accountId, sinceMs)
 
     override fun observeRecentActivities(limit: Int): Flow<List<ActivityEntity>> =
         activityDao.observeRecent(limit)
@@ -157,6 +183,11 @@ class FitDataRepositoryImpl @Inject constructor(
     // ==================== 健康域 ====================
     override fun observeDailySummaries(accountId: Long): Flow<List<DailySummaryEntity>> =
         dailyDao.observeByAccount(accountId)
+
+    override fun observeDailySummariesSince(
+        accountId: Long,
+        sinceDate: String,
+    ): Flow<List<DailySummaryEntity>> = dailyDao.observeSince(accountId, sinceDate)
 
     override fun observeLatestDailySummary(): Flow<DailySummaryEntity?> =
         dailyDao.observeLatest()
@@ -244,6 +275,11 @@ class FitDataRepositoryImpl @Inject constructor(
     override fun observeSleepSessions(accountId: Long): Flow<List<SleepSessionEntity>> =
         sleepDao.observeByAccount(accountId)
 
+    override fun observeSleepSessionsSince(
+        accountId: Long,
+        sinceMs: Long,
+    ): Flow<List<SleepSessionEntity>> = sleepDao.observeSince(accountId, sinceMs)
+
     override fun observeLatestSleep(): Flow<SleepSessionEntity?> =
         sleepDao.observeLatest()
 
@@ -320,6 +356,12 @@ class FitDataRepositoryImpl @Inject constructor(
 
 /** 合并窗口：最多回看多少天的行（个人数据量很小，一次取回在内存里合并即可） */
 private const val MERGE_WINDOW = 120
+
+/** `sync_logs` 保留 30 天；够覆盖「上周为什么没同步上」这类排查 */
+private const val LOG_RETENTION_MS = 30L * 24 * 60 * 60 * 1000
+
+/** 每写多少条日志清一次旧记录：不必每条都扫一遍表 */
+private const val LOG_PRUNE_EVERY = 20
 
 /**
  * `IN (:list)` 的分块大小。

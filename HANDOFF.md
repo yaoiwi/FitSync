@@ -1279,3 +1279,73 @@ Android 14 起 `dataSync` 必须单独声明 `FOREGROUND_SERVICE_DATA_SYNC`，�
 换成 `MiuixActionDialog`（26dp 圆角 + 底部文字按钮），正文放进 `MiuixGroupBg` 圆角块，
 `heightIn(max = 380.dp)` + `verticalScroll`，几十行诊断文本不会把按钮挤出屏幕。
 同屏的「立即重试同步？」也一并换成 `MiuixConfirmDialog`。
+
+## 二十九、刷新头规则最终版（1.5.1）
+
+> 取代第二十七节第 1 条的「所有长任务都停住」。
+
+| 场景 | 刷新头 | 列表 |
+| --- | --- | --- |
+| 搬运健康数据（最长 25 分钟） | 细线 | 可滑 |
+| 日常同步（手动） | 停住转圈 | 不可滑 |
+| 回填历史 | 停住转圈 | 不可滑 |
+| 导入 → 写回目标账号 | 停住转圈 | 不可滑 |
+| 自动同步（`silent`） | 不显示 | 可滑 |
+
+实现：`SyncCoordinator.copyHealthRunning` 只在 `launchLongTask(copyingHealth = true)`
+（即 `copyHealthToOtherAccount`）期间为 true；`HyperPage.stopHeadWhileBusy = !copyHealthRunning`。
+
+## 三十、账号排序 / 搬运的「睡眠为什么会丢」（1.5.2）
+
+### 1. 账号排序
+
+数据层：
+
+- `AccountEntity` 新增 `sort_index`（`defaultValue = "0"`）；
+- DB v2 → v3，`MIGRATION_2_3` 只做 `ALTER TABLE accounts ADD COLUMN`，不清库；
+- `AccountDao.observeEnabledAll()` / `all()` 改为 `ORDER BY sort_index ASC, added_at_ms DESC`；
+- `FitDataRepository.reorderAccounts(ids)` 在**一个事务里**把 1..n 写回，避免中途失败留下重复值。
+
+`sort_index` 默认 0 时按 `added_at_ms DESC` 排，等于升级前的顺序；用户排过一次之后新账号
+（0）仍排最前，其余按 1..n。
+
+UI：账号页右上角「排序」→ 每行行尾变成 ↑ ↓，整行点击失效（防止翻顺序时误进详情），
+点「完成」退出。移动即落库，靠 Room 的 Flow 自动刷新，不做本地临时状态。
+
+### 2. 睡眠为什么搬不过去（真 bug）
+
+搬运单位是「一天一个 wellness zip」，**zip 里通常有多个 FIT**：monitoring（步数/心率/压力）、
+sleep、stress 等。上传接口是按**文件**判重（409）也是按文件失败的。
+
+原来的判定：
+
+```kotlin
+outcome.ok -> dayOk = true          // 任意一个成功
+...
+return when { dayOk -> UPLOADED ... }  // 整天算完成 → markCopied
+```
+
+后果：monitoring 传成功、sleep 被拒（419/500），这天仍被判为 UPLOADED 并写进
+[HealthCopyLedger]（90 天窗口）→ **这天的睡眠在 90 天内永远不会再试**。
+
+修法：
+
+- `copyOneDay` 逐个文件计数 `okCount / dupCount / failures`；
+- 只有 `failures.isEmpty()` 才算整天完成（UPLOADED / DUPLICATE）并写记录；
+- 有成功也有失败 → 新增 `PARTIAL`：不写记录，`Result.partiallyDone++`，下次重试这天；
+  重试时已成功的文件服务端 409 一闪而过，只补缺的那个。
+
+### 3. 「本地已有就跳过」也不能只看日汇总
+
+`pending` 原本按 `localDates`（有健康数据的日汇总）过滤。目标账号只同步到步数、
+睡眠是空的那些天，会被整体跳过 → 睡眠同样补不上。
+
+现在加一层：本地睡眠覆盖的日期（按 `endTimeMs` 归到「起床那天」），
+**「汇总 + 睡眠」都在才算本地已有**。账号完全没有睡眠数据时（从不戴表睡 / 设备不支持）
+不启用这条，否则每次搬运都要把这些天重跑一遍，白打几百个请求。
+
+### 4. 已知边界
+
+- 源账号那天没戴表睡，zip 里就没有 sleep FIT，搬不过去——搬运只转发，不生成数据；
+- `PARTIAL` 的天数不写 ledger，所以每次搬运都会再取一次这些天；若失败原因是永久性的
+  （例如目标账号不支持的字段），会一直重试。数量通常个位数，成本可接受。

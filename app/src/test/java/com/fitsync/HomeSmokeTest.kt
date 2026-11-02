@@ -134,6 +134,7 @@ class HomeSmokeTest {
             ssoClient = GarminSsoClient(noopStore, http, MemoryCookieJar()),
             copyLedger = HealthCopyLedger(ApplicationProvider.getApplicationContext()),
             rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
+            pacer = com.fitsync.data.settings.CopyPacer(ApplicationProvider.getApplicationContext()),
         )
     }
 
@@ -222,6 +223,8 @@ class HomeSmokeTest {
             AccountAliasStore(ApplicationProvider.getApplicationContext()),
             DataExporter(db),
             DatabaseBackup(ApplicationProvider.getApplicationContext(), db),
+            HealthCopyLedger(ApplicationProvider.getApplicationContext()),
+            com.fitsync.data.settings.CopyPacer(ApplicationProvider.getApplicationContext()),
         )
 
         renderHome(viewModel)
@@ -255,6 +258,8 @@ class HomeSmokeTest {
             AccountAliasStore(ApplicationProvider.getApplicationContext()),
             DataExporter(db),
             DatabaseBackup(ApplicationProvider.getApplicationContext(), db),
+            HealthCopyLedger(ApplicationProvider.getApplicationContext()),
+            com.fitsync.data.settings.CopyPacer(ApplicationProvider.getApplicationContext()),
         )
 
         renderHome(viewModel)

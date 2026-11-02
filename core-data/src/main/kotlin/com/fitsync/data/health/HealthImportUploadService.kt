@@ -200,6 +200,8 @@ class HealthImportUploadService @Inject constructor(
                     rateLimitGate.noteRateLimited(e.retryAfterMs)
                     interrupted = true
                     messages += "Garmin 限流（429），已停止：还有 ${rateLimitGate.waitLabel()}，这段时间不要再重试"
+                    // 记账是攒批发写的，提前退出前要把它刷掉，否则这几条下次会被重搬
+                    copyLedger.flush()
                     return@withContext Result(
                         uploaded = uploaded,
                         duplicate = duplicate,
@@ -252,6 +254,9 @@ class HealthImportUploadService @Inject constructor(
             onProgress?.invoke(processed, pending.size)
             delay(UPLOAD_GAP_MS)
         }
+
+        // 记账攒批写盘，正常收尾也要刷一次
+        copyLedger.flush()
 
         Result(
             uploaded = uploaded,

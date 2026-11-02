@@ -30,7 +30,7 @@ interface AccountDao {
     @Query("SELECT * FROM accounts WHERE id = :id")
     suspend fun getById(id: Long): AccountEntity?
 
-    @Query("SELECT * FROM accounts WHERE enabled = 1 ORDER BY added_at_ms DESC")
+    @Query("SELECT * FROM accounts WHERE enabled = 1 ORDER BY sort_index ASC, added_at_ms DESC")
     fun observeEnabledAll(): Flow<List<AccountEntity>>
 
     @Query("SELECT * FROM accounts WHERE source_type = :src AND region = :region AND external_user_id = :uid")
@@ -43,8 +43,12 @@ interface AccountDao {
     suspend fun setEnabled(id: Long, enabled: Boolean)
 
     /** 导出用：只导身份信息，凭据在 CredentialVault 里，永远不落进导出文件 */
-    @Query("SELECT * FROM accounts ORDER BY added_at_ms ASC")
+    @Query("SELECT * FROM accounts ORDER BY sort_index ASC, added_at_ms ASC")
     suspend fun all(): List<AccountEntity>
+
+    /** 账号页排序：把一次移动后的完整顺序写成 1..n */
+    @Query("UPDATE accounts SET sort_index = :index WHERE id = :id")
+    suspend fun updateSortIndex(id: Long, index: Int)
 
     @Delete
     suspend fun delete(a: AccountEntity)
@@ -164,6 +168,18 @@ interface ActivityDao {
     @Query("SELECT * FROM activities WHERE account_id = :a ORDER BY start_time_ms DESC")
     fun observeByAccount(a: Long): Flow<List<ActivityEntity>>
 
+    /**
+     * 只取某段时间之后的活动（趋势图用）。
+     *
+     * 趋势只看 30 天，但 [observeByAccount] 会连三年前的活动一起读出来，
+     * 再在内存里筛——数据越攒越多就越慢。走 `(account_id, start_time_ms)` 索引只读需要的行。
+     */
+    @Query(
+        "SELECT * FROM activities WHERE account_id = :a AND start_time_ms >= :sinceMs " +
+            "ORDER BY start_time_ms DESC"
+    )
+    fun observeSince(a: Long, sinceMs: Long): Flow<List<ActivityEntity>>
+
     @Query("SELECT * FROM activities WHERE id = :id")
     suspend fun getById(id: Long): ActivityEntity?
 
@@ -256,6 +272,12 @@ interface DailySummaryDao {
     @Query("SELECT * FROM daily_summaries WHERE account_id = :a ORDER BY date DESC")
     fun observeByAccount(a: Long): Flow<List<DailySummaryEntity>>
 
+    /** 只取 [sinceDate]（含）之后的日汇总；日期是 `yyyy-MM-dd` 字符串，字典序即时间序 */
+    @Query(
+        "SELECT * FROM daily_summaries WHERE account_id = :a AND date >= :sinceDate ORDER BY date DESC"
+    )
+    fun observeSince(a: Long, sinceDate: String): Flow<List<DailySummaryEntity>>
+
     @Query("SELECT * FROM daily_summaries WHERE account_id = :a AND date = :date")
     suspend fun byDate(a: Long, date: String): DailySummaryEntity?
 
@@ -292,6 +314,13 @@ interface SleepSessionDao {
 
     @Query("SELECT * FROM sleep_sessions WHERE account_id = :a ORDER BY start_time_ms DESC")
     fun observeByAccount(a: Long): Flow<List<SleepSessionEntity>>
+
+    /** 只取 [sinceMs] 之后开始的睡眠（趋势图用，同理避免读全量历史） */
+    @Query(
+        "SELECT * FROM sleep_sessions WHERE account_id = :a AND start_time_ms >= :sinceMs " +
+            "ORDER BY start_time_ms DESC"
+    )
+    fun observeSince(a: Long, sinceMs: Long): Flow<List<SleepSessionEntity>>
 
     /** 同步时定位同一条睡眠，避免 REPLACE 换 id 后旧分期变成孤儿 */
     @Query("SELECT * FROM sleep_sessions WHERE account_id = :a AND external_id = :ext LIMIT 1")
