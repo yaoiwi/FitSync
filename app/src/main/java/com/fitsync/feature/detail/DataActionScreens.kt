@@ -308,7 +308,17 @@ private fun estimateLabel(days: Int): String = when {
     days <= 7 -> "约 30 秒、20 个请求"
     days <= 30 -> "约 2 分钟、90 个请求"
     days <= 90 -> "约 6 分钟、270 个请求"
-    else -> "约 25 分钟、1100 个请求，分 2 片自动续跑；没被限流会自动提速，期间通知栏显示进度"
+    days <= 365 -> "约 25 分钟、1100 个请求，分 2 片自动续跑；没被限流会自动提速，期间通知栏显示进度"
+    // 730 天正好是 Garmin 对第三方开放的健康数据回溯上限，再往前要不到
+    else -> "约 50 分钟、2200 个请求，分 4 片自动续跑；" +
+        "已经搬过的日期会先跳过，实际只跑缺的那些天"
+}
+
+/** 跨度文案：365 / 730 用年，其余用天。分段控件、按钮、弹窗共用一套，避免两处写死 */
+private fun spanLabel(days: Int): String = when (days) {
+    365 -> "1 年"
+    730 -> "2 年"
+    else -> "$days 天"
 }
 
 @Composable
@@ -329,7 +339,8 @@ fun CopyHealthScreen(
     val garminAccounts = accounts.filter { it.sourceType == "garmin" }
     val source = garminAccounts.firstOrNull { it.id == primaryAccountId } ?: garminAccounts.firstOrNull()
     val target = garminAccounts.firstOrNull { it.id != source?.id }
-    val dayOptions = listOf(7, 30, 90, 365)
+    // 730 天是 Garmin 对第三方开放的健康数据回溯上限（与 HealthSyncService.MAX_COPY_DAYS 一致）
+    val dayOptions = listOf(7, 30, 90, 365, 730)
     val dayIndex = dayOptions.indexOf(copyDays).let { if (it < 0) 0 else it }
 
     // 上一次搬运停在哪：跟着搬运状态变（消息一变就重读一次台账）
@@ -400,7 +411,7 @@ fun CopyHealthScreen(
                     )
                     Spacer(Modifier.height(10.dp))
                     MiuixSegmentedControl(
-                        options = dayOptions.map { if (it == 365) "1 年" else "$it 天" },
+                        options = dayOptions.map(::spanLabel),
                         selectedIndex = dayIndex,
                         onSelect = { viewModel.setCopyHealthDays(dayOptions[it]) },
                     )
@@ -491,7 +502,7 @@ fun CopyHealthScreen(
                 text = if (syncState.syncing) {
                     "正在搬运…"
                 } else {
-                    "开始搬运（${if (copyDays >= 365) "1 年" else "$copyDays 天"}）"
+                    "开始搬运（${spanLabel(copyDays)}）"
                 },
                 onClick = {
                     // 两层确认：通用风险只弹一次；1 年这种长跨度每次都提醒耗时与中断风险
@@ -538,11 +549,16 @@ fun CopyHealthScreen(
                     RiskLine("④ 不可撤销：搬过去的数据只能在 Garmin Connect 网页端逐条删除")
                 }
                 if (longSpan) {
+                    // 只有 365 / 730 两档会走到这里，直接按档给数字，别再乘除
+                    val minutes = if (copyDays > 365) 50 else 25
+                    val requests = if (copyDays > 365) 2200 else 1100
+                    val shards = (copyDays + 199) / 200
                     Text(
-                        text = "本次约 25 分钟、约 1100 个请求，分 2 片自动续跑（默认两天并行，" +
-                            "连续 20 天没被限流会自动提到三天，撞到 429 就退回一天）。" +
+                        text = "本次约 $minutes 分钟、约 $requests 个请求，分 $shards 片自动续跑" +
+                            "（默认两天并行，连续 20 天没被限流会自动提到三天，撞到 429 就退回一天）。" +
                             "开始后通知栏会有一条常驻进度，可以锁屏、切到别的应用，只要通知还在就还在搬；" +
-                            "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，下次会从断点接着搬。",
+                            "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，下次会从断点接着搬。" +
+                            "已经搬过的日期会在开工前跳过，不会再打一遍请求。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         color = MiuixSummary,

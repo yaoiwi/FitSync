@@ -120,6 +120,33 @@ class HealthCopyLedgerTest {
         assertEquals(0, HealthCopyLedger.remainingDays("2026-11-02", 0, today))
     }
 
+    @Test
+    fun `两年跨度下断点只减掉已搬的那一段`() {
+        val today = LocalDate.of(2026, 11, 2)
+        // 窗口起点 2024-11-03。只搬了今天 → 730 天里还剩 729 天
+        assertEquals(729, HealthCopyLedger.remainingDays("2026-11-02", 730, today))
+        // 已经搬满一年（断点 2025-11-02）→ 2 年跨度里只剩更早的那 364 天，
+        // 也就是「先搬 1 年、再选 2 年」实际只跑一半，不会从头再来
+        assertEquals(364, HealthCopyLedger.remainingDays("2025-11-02", 730, today))
+        // 断点正好落在窗口起点 → 整段都搬过了
+        assertEquals(0, HealthCopyLedger.remainingDays("2024-11-03", 730, today))
+    }
+
+    @Test
+    fun `记账窗口要覆盖一次两年搬运的整个周期`() {
+        // 90 天时，选 2 年、隔一个多月再点第二轮，第一年会被当成过期重跑
+        assertEquals(
+            800L * 24 * 60 * 60 * 1000,
+            HealthCopyLedger.SKIP_WINDOW_MS,
+        )
+        // 必须严格长于最大跨度：正好 730 天时，最老那条记录会在第 730 天过期，
+        // 而它对应的正是两年期最后一个待搬日
+        assertTrue(
+            "窗口必须长于 730 天，否则两年搬运分两轮会重跑",
+            HealthCopyLedger.SKIP_WINDOW_MS > 730L * 24 * 60 * 60 * 1000,
+        )
+    }
+
     // ==================== 中断标记 ====================
 
     @Test

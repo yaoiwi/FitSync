@@ -86,7 +86,7 @@ class HealthCopyLedger @Inject constructor(
     data class Progress(
         /** 记录里最老的一天：下次搬运会从它继续往前 */
         val oldestDate: String,
-        /** 记录里共有多少天（都在 90 天窗口内） */
+        /** 记录里共有多少天（都在 [SKIP_WINDOW_MS] 窗口内） */
         val copiedDays: Int,
         /** 最近一次记账时间 */
         val lastAtMs: Long,
@@ -204,8 +204,14 @@ class HealthCopyLedger @Inject constructor(
          * 第二天的下一轮把前一天搬过的几百天全部重来一遍——白花几百个请求，
          * 正是最容易被限流的动作。改成 90 天：只记成功的日期，失败的日期不记，
          * 所以「重试」仍然有效，重试的只是没成功的那部分。
+         *
+         * 支持 730 天跨度后又发现 90 天不够：选 2 年、分三次点（每次隔一个多月），
+         * 第二轮就会把第一轮的一整年重跑一遍。窗口改成 800 天 —— 必须比最大跨度
+         * （730 天）还长一点，否则「最老那条记录」会在第 730 天刚好过期，
+         * 而它对应的正是两年期最后一个待搬日。代价只是 SharedPreferences 里多存
+         * 几百条日期（约 15 KB），而重跑几百天要花的是一小时的请求。
          */
-        const val SKIP_WINDOW_MS = 90L * 24 * 60 * 60 * 1000
+        const val SKIP_WINDOW_MS = 800L * 24 * 60 * 60 * 1000
 
         /** 攒够这么多条落一次盘 */
         const val FLUSH_EVERY = 20

@@ -177,7 +177,7 @@ class SyncCoordinator @Inject constructor(
         SyncSettings.setBackfillDays(context, days)
     }
 
-    /** 搬运健康数据的默认跨度（7 / 30 / 90 / 365） */
+    /** 搬运健康数据的默认跨度（7 / 30 / 90 / 365 / 730 天） */
     private val _copyHealthDays = MutableStateFlow(SyncSettings.copyHealthDays(context))
     val copyHealthDays: StateFlow<Int> = _copyHealthDays.asStateFlow()
 
@@ -822,9 +822,12 @@ class SyncCoordinator @Inject constructor(
         const val AUTO_SYNC_INTERVAL_MS = 30 * 60_000L
 
         /**
-         * 唤醒锁超时：一年期搬运约 55 分钟，留到 90 分钟。
-         * 超时自动释放，避免异常路径把 CPU 一直按着不放导致耗电。
+         * 唤醒锁超时。
+         *
+         * 一年期约 55 分钟，两年期要翻倍；再算上撞 429 后退回单天并行、分片之间的
+         * 强制休息，最坏能拖到两个小时。留到 180 分钟，超时自动释放，
+         * 避免异常路径把 CPU 一直按着不放导致耗电。
          */
-        const val WAKE_LOCK_TIMEOUT_MS = 90 * 60_000L
+        const val WAKE_LOCK_TIMEOUT_MS = 180 * 60_000L
     }
 }
