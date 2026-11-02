@@ -2,128 +2,64 @@ package com.fitsync.feature.home
 
 import android.content.Context
 import android.content.Intent
-import android.net.Uri
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ExperimentalMaterialApi
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.pullrefresh.PullRefreshIndicator
-import androidx.compose.material.pullrefresh.pullRefresh
-import androidx.compose.material.pullrefresh.rememberPullRefreshState
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import android.widget.Toast
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.zIndex
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.fitsync.BuildConfig
-import com.fitsync.copyToClipboard
-import com.fitsync.data.network.GarminDiagnostics
 import com.fitsync.data.db.AccountEntity
-import com.fitsync.data.db.ActivityEntity
-import com.fitsync.permission.BatteryOptimization
-import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HapticFeedback
 import com.fitsync.ui.components.Haptics
-import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.LiquidGlassNavigationBar
 import com.fitsync.ui.components.LiquidGlassNavigationItem
-import com.fitsync.ui.components.MiuixCard
-import com.fitsync.ui.components.MiuixDivider
+import com.fitsync.ui.components.MiuixActionDialog
 import com.fitsync.ui.components.MiuixInputDialog
-import com.fitsync.ui.components.MiuixLargeHeader
-import com.fitsync.ui.components.formatDuration
-import com.fitsync.ui.components.rememberTick
-import com.fitsync.ui.components.regionLabel
-import com.fitsync.ui.components.sportGlyph
-import com.fitsync.ui.components.sportLabel
-import com.fitsync.ui.components.statusColor
-import com.fitsync.ui.components.statusLabel
-import com.fitsync.ui.components.MiuixLeadingIcon
-import com.fitsync.ui.components.MiuixNavItem
 import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixActionDialog
-import com.fitsync.ui.components.MiuixConfirmDialog
-import com.fitsync.ui.components.MiuixRow
-import com.fitsync.ui.components.MiuixSectionTitle
-import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.theme.FitSyncTheme
 import com.fitsync.ui.theme.FloatingNavBarPref
 import com.fitsync.ui.theme.MiuiText1
-import com.fitsync.ui.theme.MiuixAction
 import com.fitsync.ui.theme.MiuixCanvas
-import com.fitsync.ui.theme.MiuixCardSurface
-import com.fitsync.ui.theme.MiuixError
-import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
-import com.fitsync.ui.components.MiuixSegmentedControl
-import com.fitsync.ui.theme.StatusGreen
 import com.fitsync.ui.theme.ThemeModePref
-import java.util.Locale
 
 /**
  * 首页。
@@ -166,16 +102,9 @@ fun HomeScreen(
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
-        if (uri == null) return@rememberLauncherForActivityResult
-        val name = uri.lastPathSegment ?: "import"
-        val bytes = runCatching {
-            context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-        }.getOrNull()
-        if (bytes == null) {
-            viewModel.importFailed("无法读取所选文件（可能没有访问权限）")
-        } else {
-            viewModel.importData(bytes, name)
-        }
+        // 这里还在主线程：以前直接 readBytes()，30 MB 的导出包会卡住界面甚至 ANR。
+        // 现在只把 uri 交出去，读取交给协调器的 IO 线程，超限会自己停下。
+        if (uri != null) viewModel.importFromUri(uri)
     }
     val syncState by viewModel.syncState.collectAsState()
     // 搬运健康数据运行中：只有当它用细线（要能一边等一边翻数据）
@@ -183,6 +112,8 @@ fun HomeScreen(
     val primaryAccountId by viewModel.primaryAccountId.collectAsState()
     val aliases by viewModel.aliases.collectAsState()
     var renameTarget by remember { mutableStateOf<AccountEntity?>(null) }
+    // 恢复的备份已经落进 pending 文件，等下次启动才替换数据库
+    var restoreReady by remember { mutableStateOf(false) }
     var tab by remember { mutableStateOf(0) }
     // 今日大数字当前展示哪个指标：0 步数 / 1 距离 / 2 活动热量 / 3 楼层
     var todayMetric by remember { mutableStateOf(0) }
@@ -323,6 +254,7 @@ fun HomeScreen(
                                 rateLimitStrikes = viewModel::rateLimitStrikes,
                                 onRetryAfterRateLimit = viewModel::retryAfterRateLimit,
                                 onBackupDatabase = { uri ->
+                                    Toast.makeText(context, "正在备份…", Toast.LENGTH_SHORT).show()
                                     scope.launch {
                                         val msg = runCatching { viewModel.backupDatabase(uri) }
                                             .fold(
@@ -334,12 +266,15 @@ fun HomeScreen(
                                 },
                                 onRestoreDatabase = { uri ->
                                     scope.launch {
-                                        val msg = runCatching { viewModel.restoreDatabase(uri) }
-                                            .fold(
-                                                { "已准备恢复，重启 App 后生效" },
-                                                { "恢复失败：${it.message ?: "未知错误"}" },
-                                            )
-                                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                                        runCatching { viewModel.restoreDatabase(uri) }
+                                            .onSuccess { restoreReady = true }
+                                            .onFailure {
+                                                Toast.makeText(
+                                                    context,
+                                                    "恢复失败：${it.message ?: "未知错误"}",
+                                                    Toast.LENGTH_LONG,
+                                                ).show()
+                                            }
                                     }
                                 },
                             )
@@ -347,7 +282,65 @@ fun HomeScreen(
                 }
             }
         }
+
+        if (restoreReady) {
+            MiuixActionDialog(
+                title = "恢复已就位",
+                confirmText = "立即重启",
+                cancelText = "稍后",
+                onConfirm = {
+                    restoreReady = false
+                    restartApp(context)
+                },
+                onDismiss = { restoreReady = false },
+            ) {
+                Column {
+                    Text(
+                        text = "备份已经取出来了，要重启一次才会替换成备份里的数据。",
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MiuiText1,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        text = "登录凭据不会随备份迁移（token 的密钥留在原来的手机上），" +
+                            "重启后每个账号都需要重新登录一次，历史数据都在。",
+                        fontSize = 12.sp,
+                        lineHeight = 18.sp,
+                        color = MiuixSummary,
+                    )
+                }
+            }
+        }
     }
+}
+
+/**
+ * 重启自己。
+ *
+ * 恢复数据库只能靠「进程重启后、Room 打开之前替换文件」，所以必须真的重来一遍。
+ * 直接 `exitProcess` 会把用户丢回桌面，得先用 AlarmManager 挂一个拉起自己的意图
+ * （延迟 150ms，留出退出的时间）。Android 12 起精确闹钟要权限，拿不到就退回松散闹钟，
+ * 反正前台场景下也是立刻触发。
+ */
+private fun restartApp(context: Context) {
+    val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)
+    if (intent != null) {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        val pending = android.app.PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            android.app.PendingIntent.FLAG_CANCEL_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE,
+        )
+        val am = context.getSystemService(android.app.AlarmManager::class.java)
+        val at = System.currentTimeMillis() + 150
+        runCatching { am.setExact(android.app.AlarmManager.RTC, at, pending) }
+            .recoverCatching { am.set(android.app.AlarmManager.RTC, at, pending) }
+    }
+    (context as? android.app.Activity)?.finishAffinity()
+    android.os.Process.killProcess(android.os.Process.myPid())
+    kotlin.system.exitProcess(0)
 }
 
 // ============================ 空状态 ============================

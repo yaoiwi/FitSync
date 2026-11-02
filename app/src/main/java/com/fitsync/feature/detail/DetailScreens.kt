@@ -30,11 +30,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
-import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.ActivityLapEntity
 import com.fitsync.data.db.ActivityEntity
 import com.fitsync.feature.home.HomeViewModel
 import com.fitsync.ui.components.accountTitle
+import com.fitsync.feature.home.TimeFmt
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
@@ -62,9 +62,6 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 /**
  * 账号 / 活动的详情页面。
@@ -212,10 +209,7 @@ fun AccountDetailScreen(
                                     Spacer(Modifier.height(2.dp))
                                     Text(
                                         text = if (account.lastSyncAtMs > 0) {
-                                            "上次同步 " + SimpleDateFormat(
-                                                "yyyy-MM-dd HH:mm",
-                                                Locale.CHINA,
-                                            ).format(Date(account.lastSyncAtMs))
+                                            "上次同步 " + TimeFmt.clockFull(account.lastSyncAtMs)
                                         } else {
                                             "还没有同步过"
                                         },
@@ -228,9 +222,7 @@ fun AccountDetailScreen(
                             DetailLine(
                                 "凭据有效期",
                                 if (account.tokenExpiresAtMs > 0) {
-                                    SimpleDateFormat("MM-dd HH:mm", Locale.CHINA).format(
-                                        Date(account.tokenExpiresAtMs),
-                                    )
+                                    TimeFmt.clockShort(account.tokenExpiresAtMs)
                                 } else {
                                     "—"
                                 },
@@ -374,9 +366,7 @@ fun ActivityDetailScreen(
         GlassHost(modifier = Modifier.fillMaxSize()) {
             HyperPage(
                 title = activity?.let { sportLabel(it.sport) } ?: "活动详情",
-                subtitle = activity?.let {
-                    SimpleDateFormat("M 月 d 日 HH:mm", Locale.CHINA).format(Date(it.startTimeMs))
-                } ?: "活动不存在",
+                subtitle = activity?.let { TimeFmt.dayClock(it.startTimeMs) } ?: "活动不存在",
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(MiuixIcons.Back, contentDescription = "返回")
@@ -655,9 +645,7 @@ private fun ActivityHero(activity: ActivityEntity) {
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    text = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.CHINA).format(
-                        Date(activity.startTimeMs),
-                    ),
+                    text = TimeFmt.clockFull(activity.startTimeMs),
                     fontSize = 12.5.sp,
                     color = MiuixSummary,
                 )

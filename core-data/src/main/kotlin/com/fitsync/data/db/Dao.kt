@@ -39,6 +39,16 @@ interface AccountDao {
     @Query("UPDATE accounts SET status = :status, last_sync_at_ms = :ts WHERE id = :id")
     suspend fun updateStatus(id: Long, status: String, ts: Long)
 
+    /**
+     * 恢复备份后把所有账号标成「需重新登录」。
+     *
+     * 凭据在 `filesDir/credentials.json`，用 Android Keystore 托管的密钥加密，
+     * 密钥不可导出、也不在备份里。所以换机恢复后库里的 token 一个都用不了，
+     * 但 `status` 还是备份那天的「正常」——界面上一切正常，点同步才莫名其妙失败。
+     */
+    @Query("UPDATE accounts SET status = :status")
+    suspend fun markAllStatus(status: String)
+
     @Query("UPDATE accounts SET enabled = :enabled WHERE id = :id")
     suspend fun setEnabled(id: Long, enabled: Boolean)
 

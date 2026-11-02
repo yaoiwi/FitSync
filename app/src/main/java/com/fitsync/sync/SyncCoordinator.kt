@@ -3,11 +3,15 @@ package com.fitsync.sync
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
+import com.fitsync.data.backup.RestoreHelper
+import com.fitsync.data.db.AccountStatus
 import com.fitsync.data.db.FitDataRepository
 import com.fitsync.data.db.SourceType
 import com.fitsync.data.health.HealthSyncService
 import com.fitsync.data.importer.LocalDataImporter
 import com.fitsync.data.settings.AccountAliasStore
+import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.data.settings.PrimaryAccountStore
 import com.fitsync.data.settings.RateLimitGate
 import com.fitsync.data.settings.SyncSettings
@@ -25,6 +29,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -48,6 +54,7 @@ class SyncCoordinator @Inject constructor(
     private val importUploadService: com.fitsync.data.health.HealthImportUploadService,
     private val aliasStore: AccountAliasStore,
     private val rateLimitGate: RateLimitGate,
+    private val copyLedger: HealthCopyLedger,
 ) {
 
     data class UiState(
@@ -402,6 +409,77 @@ class SyncCoordinator @Inject constructor(
     }
 
     /**
+     * 从 SAF 选中的文件导入。
+     *
+     * 以前这一步在 `ActivityResult` 回调里直接 `readBytes()`——那是主线程。
+     * 导入包上限 32 MB，读一次要几百毫秒，慢机型够触发一次明显卡顿甚至 ANR；
+     * 大文件还会把整份内容连同解压结果一起堆在内存里。现在先流式读、边读边计数，
+     * 超过 [MAX_IMPORT_BYTES] 立刻放弃，剩下的交给 IO 线程。
+     */
+    fun importFromUri(uri: Uri) {
+        if (isLongTaskRunning()) {
+            _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
+            return
+        }
+        scope.launch {
+            when (val read = readCapped(uri)) {
+                is ImportSource.Ready -> importData(read.bytes, read.name)
+                is ImportSource.TooLarge ->
+                    importFailed("文件有 ${read.bytes / 1024 / 1024} MB，单个导入包不要超过 64 MB")
+                ImportSource.Unreadable -> importFailed("无法读取所选文件（可能没有访问权限）")
+            }
+        }
+    }
+
+    private sealed interface ImportSource {
+        data class Ready(val bytes: ByteArray, val name: String) : ImportSource
+        data class TooLarge(val bytes: Long) : ImportSource
+        data object Unreadable : ImportSource
+    }
+
+    private suspend fun readCapped(uri: Uri): ImportSource = withContext(Dispatchers.IO) {
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                val out = ByteArrayOutputStream()
+                val buf = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val n = input.read(buf)
+                    if (n < 0) break
+                    total += n
+                    // 边读边数：不先读满再判断，否则超大文件还没报错就已经把内存吃掉了
+                    if (total > MAX_IMPORT_BYTES) return@use ImportSource.TooLarge(total)
+                    out.write(buf, 0, n)
+                }
+                if (total == 0L) {
+                    ImportSource.Unreadable
+                } else {
+                    ImportSource.Ready(out.toByteArray(), uri.lastPathSegment ?: "import")
+                }
+            } ?: ImportSource.Unreadable
+        }.getOrDefault(ImportSource.Unreadable)
+    }
+
+    /**
+     * 启动时的一次性善后。
+     *
+     * 恢复备份后 Keystore 里的密钥已经换了一套，备份里那些 token 一个也解不开。
+     * 但库里 `status` 还是备份那天的「正常」，界面上看不出任何异常，
+     * 用户点同步只会得到一句与「没登录」无关的报错。这里统一标成「需重新登录」。
+     */
+    fun consumeRestoreFlags() {
+        scope.launch {
+            if (!RestoreHelper.consumeCredentialsReset(context)) return@launch
+            runCatching { repository.markAllAccountsStatus(AccountStatus.EXPIRED.code) }
+                .onFailure { android.util.Log.w("FitSync", "恢复后重置账号状态失败", it) }
+            _state.value = UiState(
+                syncing = false,
+                message = "已从备份恢复。登录凭据不会随备份迁移，请重新登录各账号",
+            )
+        }
+    }
+
+    /**
      * @param targetAccountId 选择账号时，数据写进该账号并在导入后自动写回 Garmin；
      *   传 null 则落进独立的「本地导入」账号，只留在本机。
      */
@@ -554,6 +632,9 @@ class SyncCoordinator @Inject constructor(
             val label = "${labelOf(from)} → ${labelOf(to)}"
             // 一年期搬运要 55 分钟：进前台服务，锁屏后 Doze 不会把网络掐掉
             startLongTaskService("搬运健康数据", "正在准备：$label")
+            // 先立个「在跑」的牌子。进程要是被系统清掉，这个牌子没人摘，
+            // 下次启动就能据此提示「上次没搬完」——协程的 finally 在这种情况下根本不会执行
+            copyLedger.markRunning(from.id, to.id, days)
             try {
                 _state.value = UiState(
                     syncing = true,
@@ -573,6 +654,11 @@ class SyncCoordinator @Inject constructor(
                             total = total,
                         )
                     }
+                }
+                // 只有「没出错、也没有剩余天数」才算真的搬完；中断和部分失败都留着标记，
+                // 下次启动才能提醒用户上次停在哪
+                if (result.error == null && !result.interrupted) {
+                    copyLedger.clearRunning(from.id, to.id)
                 }
                 val text = buildString {
                     append(labelOf(from)).append(" → ").append(labelOf(to)).append("：")
@@ -717,6 +803,14 @@ class SyncCoordinator @Inject constructor(
     }.getOrDefault(true)
 
     private companion object {
+        /**
+         * 单个导入包上限。
+         *
+         * 导入器本身按 32 MB 限单个 FIT；这里限的是「用户选中的那个文件」，
+         * 可能是包含千余个 FIT 的导出 zip，给到 64 MB 足够，再大多半是选错了。
+         */
+        const val MAX_IMPORT_BYTES = 64L * 1024 * 1024
+
         /**
          * 打开 App 时最多多久自动同步一次。
          *

@@ -29,12 +29,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fitsync.ui.theme.MiuiAccent
 import com.fitsync.ui.theme.MiuiCard
-import com.fitsync.ui.theme.MiuiOrange
-import com.fitsync.ui.theme.MiuiRed
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuiText2
 import com.fitsync.ui.theme.MiuiText3
-import com.fitsync.ui.theme.MiuiYellow
 
 /**
  * MFA 6 位验证码输入框（原型 Screen D）。

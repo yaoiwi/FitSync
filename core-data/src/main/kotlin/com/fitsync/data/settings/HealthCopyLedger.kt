@@ -92,6 +92,59 @@ class HealthCopyLedger @Inject constructor(
         val lastAtMs: Long,
     )
 
+    // ==================== 中断标记 ====================
+
+    /**
+     * 一次没跑完的搬运。
+     *
+     * 搬运跑在协程里，进程被国产 ROM 清掉时 `finally` 不会执行，
+     * 所以「标记还在」本身就等于「上次没搬完」——不需要再存一个状态字段。
+     * 正常结束、被用户主动停止、以及把剩余天数搬完，都会调 [clearRunning]。
+     */
+    data class RunMark(
+        val fromAccountId: Long,
+        val toAccountId: Long,
+        val days: Int,
+        val startedAtMs: Long,
+    )
+
+    /** 开始搬运时登记。同一对账号只留一条，旧的先清掉 */
+    @Synchronized
+    fun markRunning(fromAccountId: Long, toAccountId: Long, days: Int) {
+        dismissAllRunMarks()
+        prefs.edit()
+            .putString(runningKey(fromAccountId, toAccountId), "$days|${System.currentTimeMillis()}")
+            .apply()
+    }
+
+    @Synchronized
+    fun clearRunning(fromAccountId: Long, toAccountId: Long) {
+        prefs.edit().remove(runningKey(fromAccountId, toAccountId)).apply()
+    }
+
+    /** 启动 / 进搬运页时问一次：上次是不是没跑完 */
+    @Synchronized
+    fun interruptedRun(): RunMark? {
+        val entry = prefs.all.entries.firstOrNull { it.key.startsWith(RUNNING_PREFIX) } ?: return null
+        val value = entry.value as? String ?: return null
+        val ids = entry.key.removePrefix(RUNNING_PREFIX).split('_')
+        if (ids.size != 2) return null
+        val parts = value.split('|')
+        return RunMark(
+            fromAccountId = ids[0].toLongOrNull() ?: return null,
+            toAccountId = ids[1].toLongOrNull() ?: return null,
+            days = parts.getOrNull(0)?.toIntOrNull() ?: 7,
+            startedAtMs = parts.getOrNull(1)?.toLongOrNull() ?: 0L,
+        )
+    }
+
+    @Synchronized
+    fun dismissAllRunMarks() {
+        val editor = prefs.edit()
+        prefs.all.keys.filter { it.startsWith(RUNNING_PREFIX) }.forEach { editor.remove(it) }
+        editor.apply()
+    }
+
     /** 读某个键的活记录，顺手丢掉过期项 */
     private fun alive(k: String): MutableMap<String, Long> {
         val map = cache.getOrPut(k) { load(k) }
@@ -136,8 +189,12 @@ class HealthCopyLedger @Inject constructor(
 
     private fun key(from: Long, to: Long) = "copy_${from}_$to"
 
+    private fun runningKey(from: Long, to: Long) = "$RUNNING_PREFIX${from}_$to"
+
     companion object {
         private const val PREFS = "fitsync_health_copy_ledger"
+
+        private const val RUNNING_PREFIX = "running_"
 
         /**
          * 搬完的日期在这段时间内不再重复搬。

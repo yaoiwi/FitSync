@@ -1,7 +1,5 @@
 package com.fitsync.feature.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,13 +7,11 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
@@ -24,6 +20,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.data.db.AccountEntity
 import com.fitsync.data.db.SyncLogEntity
 import com.fitsync.feature.home.HomeViewModel
+import com.fitsync.feature.home.TimeFmt
 import com.fitsync.ui.components.accountTitle
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
@@ -32,7 +29,6 @@ import com.fitsync.ui.components.MiuixDivider
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.theme.FitSyncTheme
-import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixError
 import com.fitsync.ui.theme.MiuixSummary
 import top.yukonga.miuix.kmp.basic.Icon
@@ -40,10 +36,6 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.icon.MiuixIcons
 import top.yukonga.miuix.kmp.icon.extended.Back
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
-import java.util.Locale
 
 /**
  * 同步记录：把 `sync_logs` 里发生过的事摊开给用户看。
@@ -159,10 +151,14 @@ private fun accountName(
 
 private fun formatTime(tsMs: Long): String {
     if (tsMs <= 0) return "—"
-    val now = Calendar.getInstance()
-    val then = Calendar.getInstance().apply { timeInMillis = tsMs }
-    val sameDay = now.get(Calendar.YEAR) == then.get(Calendar.YEAR) &&
-        now.get(Calendar.DAY_OF_YEAR) == then.get(Calendar.DAY_OF_YEAR)
-    val pattern = if (sameDay) "HH:mm" else "M-d HH:mm"
-    return SimpleDateFormat(pattern, Locale.CHINA).format(Date(tsMs))
+    // 原来每行都 new 两个 Calendar 加一个 SimpleDateFormat，日志页滚动时是纯浪费；
+    // LocalDate 比较走系统缓存，格式化器是常量
+    val day = java.time.Instant.ofEpochMilli(tsMs)
+        .atZone(java.time.ZoneId.systemDefault())
+        .toLocalDate()
+    return if (day == java.time.LocalDate.now()) {
+        TimeFmt.hourMinute(tsMs)
+    } else {
+        TimeFmt.monthDayClock(tsMs)
+    }
 }

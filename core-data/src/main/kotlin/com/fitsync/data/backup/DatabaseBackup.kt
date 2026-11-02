@@ -76,6 +76,9 @@ class DatabaseBackup @Inject constructor(
                 },
             )
         }
+        // 恢复要等下次启动才真正替换文件，这里先记一笔：
+        // 备份里只有数据库，token 的 Keystore 密钥不随文件走，恢复后必须重新登录
+        RestoreHelper.markCredentialsNeedReset(context)
     }
 }
 
@@ -88,6 +91,29 @@ class DatabaseBackup @Inject constructor(
 object RestoreHelper {
 
     const val PENDING_NAME = "pending-restore.db"
+
+    private const val PREFS = "fitsync_restore"
+    private const val KEY_CREDENTIALS_RESET = "pending_credentials_reset"
+
+    /** 恢复的备份里带着账号，但凭据解不开，启动后要把账号标成「需重新登录」 */
+    fun markCredentialsNeedReset(context: Context) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_CREDENTIALS_RESET, true).apply()
+    }
+
+    /**
+     * 恢复是否已经生效、且还没处理过账号状态。
+     *
+     * 只有 `pending-restore.db` 已经不在了才成立——那说明 [applyIfNeeded] 替换成功。
+     * 还留着 pending 就说明用户点了恢复但没重启，此时不能动账号状态。
+     */
+    fun consumeCredentialsReset(context: Context): Boolean {
+        if (File(context.filesDir, PENDING_NAME).exists()) return false
+        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        if (!prefs.getBoolean(KEY_CREDENTIALS_RESET, false)) return false
+        prefs.edit().putBoolean(KEY_CREDENTIALS_RESET, false).apply()
+        return true
+    }
 
     fun applyIfNeeded(context: Context) {
         val pending = File(context.filesDir, PENDING_NAME)

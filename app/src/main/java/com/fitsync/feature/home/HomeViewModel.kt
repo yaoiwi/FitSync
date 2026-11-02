@@ -21,23 +21,17 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
-import java.util.Date
-import java.util.Locale
 import javax.inject.Inject
 
 /**
@@ -325,6 +319,9 @@ class HomeViewModel @Inject constructor(
     fun importData(bytes: ByteArray, fileName: String, targetAccountId: Long? = null) =
         syncCoordinator.importData(bytes, fileName, targetAccountId)
 
+    /** 直接从 SAF 拿到的 uri 导入：读文件在协调器的 IO 线程里做，不占主线程 */
+    fun importFromUri(uri: Uri) = syncCoordinator.importFromUri(uri)
+
     fun importFailed(reason: String) = syncCoordinator.importFailed(reason)
 
     fun copyActivitiesToOtherAccount() = syncCoordinator.copyActivitiesToOtherAccount()
@@ -349,6 +346,17 @@ class HomeViewModel @Inject constructor(
         if (fromAccountId == null || toAccountId == null) return null
         return copyLedger.progress(fromAccountId, toAccountId)
     }
+
+    /**
+     * 上一次没跑完的搬运。
+     *
+     * 进程被清掉时协程的 finally 不会执行，「在跑」的标记就一直留在盘上——
+     * 这正好是我们要的断点凭据：有标记 = 上次没搬完。
+     */
+    fun interruptedCopy(): HealthCopyLedger.RunMark? = copyLedger.interruptedRun()
+
+    /** 用户表示「不继续了」，把标记清掉，别再提示 */
+    fun dismissInterruptedCopy() = copyLedger.dismissAllRunMarks()
 
     /** 当前并发档位的一句话说明（自适应提速的解释） */
     fun copyPaceLabel(): String = copyPacer.label()
@@ -393,8 +401,8 @@ class HomeViewModel @Inject constructor(
     suspend fun restoreDatabase(uri: Uri) = databaseBackup.stageRestore(uri)
 
     /** 生成导出文件（不落盘，写由页面通过 SAF 完成） */
-    suspend fun buildExport(format: ExportFormat): ExportFile {
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.CHINA).format(Date())
+    suspend     fun buildExport(format: ExportFormat): ExportFile {
+        val stamp = TimeFmt.fileStamp()
         return when (format) {
             ExportFormat.JSON -> {
                 val (text, summary) = exporter.exportJson()

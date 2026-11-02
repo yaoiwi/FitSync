@@ -1,23 +1,77 @@
-# FitSync 冷启动热路径（手工骨架）。
+# FitSync 冷启动热路径。
 #
-# 只声明类、不写方法签名：手写的 HSPL 行一旦签名对不上就会被静默丢弃，
-# 反而看不出问题。正式做法是加一个 :baselineprofile 模块用 Macrobenchmark
-# 跑真实启动轨迹，那份会带具体方法，覆盖也比手写准。
+# 这份是**手工规则**，不是真机采集：只声明类、不写方法签名——手写的 HSPL 行
+# 一旦签名对不上就会被 R8 静默丢弃，反而看不出问题；整类规则则一定会生效。
+# 类名都取自实际编译产物（app/build、core-data/build 里的 .class），R8 混淆时会
+# 跟着映射表改名，所以这里写源码形态的类名是正确的。
+#
+# 正式做法仍是加一个 :baselineprofile 模块用 Macrobenchmark 跑真实启动轨迹，
+# 那份会带具体方法、覆盖率更高。在此之前，这份规则至少把「首屏要加载的类」
+# 在安装时预编译掉。
 #
 # AGP 会把这份文件编成 assets/dexopt/baseline.prof 打进 APK，
 # 由 profileinstaller 在安装 / 首次启动时提交给 ART 做 AOT 编译。
 
-# 进程入口
+# ===== 进程入口 =====
 Lcom/fitsync/FitSyncApp;
 Lcom/fitsync/MainActivity;
 
-# 首屏：首页与它的 ViewModel（冷启动最重的一段）
+# ===== 首屏：首页四个 tab 与它的 ViewModel =====
 Lcom/fitsync/feature/home/HomeScreenKt;
 Lcom/fitsync/feature/home/HomeViewModel;
+Lcom/fitsync/feature/home/HomeOverviewTabKt;
+Lcom/fitsync/feature/home/HomeActivityTabKt;
+Lcom/fitsync/feature/home/HomeAccountsTabKt;
+Lcom/fitsync/feature/home/HomeSettingsTabKt;
+Lcom/fitsync/feature/home/TrendCardKt;
+Lcom/fitsync/feature/home/WeekCardKt;
+Lcom/fitsync/feature/home/TimeFmt;
+Lcom/fitsync/feature/home/AccountDrag;
 
-# 数据层：打开数据库 + Room 生成的实现类
+# ===== 导航外壳 =====
+Lcom/fitsync/navigation/FitSyncNavHostKt;
+Lcom/fitsync/navigation/Screen;
+
+# ===== 主题与页面骨架（首帧必经） =====
+Lcom/fitsync/ui/theme/FitThemeKt;
+Lcom/fitsync/ui/theme/FitPalette;
+Lcom/fitsync/ui/theme/ThemeModePref;
+Lcom/fitsync/ui/theme/ThemeModePrefKt;
+Lcom/fitsync/ui/theme/FloatingNavBarPref;
+Lcom/fitsync/ui/components/HyperPageKt;
+Lcom/fitsync/ui/components/MiuixSkeletonKt;
+Lcom/fitsync/ui/components/LiquidGlassNavigationBarKt;
+Lcom/fitsync/ui/components/LiquidGlassKt;
+Lcom/fitsync/ui/components/Haptics;
+Lcom/fitsync/ui/components/HapticsKt;
+
+# ===== 数据层：打开数据库 + 首屏要跑的几条查询 =====
 Lcom/fitsync/data/db/FitSyncDatabase_Impl;
+Lcom/fitsync/data/db/FitDataRepositoryImpl;
+Lcom/fitsync/data/db/AccountDao_Impl;
+Lcom/fitsync/data/db/DailySummaryDao_Impl;
+Lcom/fitsync/data/db/SleepSessionDao_Impl;
+Lcom/fitsync/data/db/ActivityDao_Impl;
+Lcom/fitsync/data/db/SyncLogDao_Impl;
+Lcom/fitsync/data/db/Converters;
+Lcom/fitsync/data/db/AccountEntity;
+Lcom/fitsync/data/db/DailySummaryEntity;
+Lcom/fitsync/data/db/SleepSessionEntity;
+Lcom/fitsync/data/db/ActivityEntity;
 
-# Compose 运行时与宿主 View，几乎每个界面都要走
+# ===== 本机偏好：首屏要读一串 =====
+Lcom/fitsync/data/settings/PrimaryAccountStore;
+Lcom/fitsync/data/settings/AccountAliasStore;
+Lcom/fitsync/data/settings/SyncSettings;
+Lcom/fitsync/data/settings/RateLimitGate;
+
+# ===== 打开即同步：调度与协调器 =====
+Lcom/fitsync/sync/SyncCoordinator;
+Lcom/fitsync/sync/SyncScheduler;
+Lcom/fitsync/sync/SyncWorker;
+
+# ===== Compose 运行时与宿主 View，每个界面都要走 =====
 Landroidx/compose/runtime/Recomposer;
+Landroidx/compose/runtime/ComposerImpl;
+Landroidx/compose/runtime/SnapshotStateKt;
 Landroidx/compose/ui/platform/AndroidComposeView;

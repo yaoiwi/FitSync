@@ -1,8 +1,10 @@
 package com.fitsync.data.backup
 
 import android.database.sqlite.SQLiteDatabase
+import androidx.test.core.app.ApplicationProvider
 import com.fitsync.data.db.FITSYNC_DB_VERSION
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -64,5 +66,33 @@ class RestoreHelperTest {
         val file = File.createTempFile("tiny", ".db").apply { writeBytes(ByteArray(8)) }
         assertEquals(RestoreHelper.INVALID_SCHEMA, RestoreHelper.schemaVersion(file))
         file.delete()
+    }
+
+    // ==================== 恢复后的账号状态 ====================
+
+    @Test
+    fun `恢复还没应用时不能动账号状态`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        // 模拟「点了恢复但没重启」：pending 文件还在
+        val pending = File(context.filesDir, RestoreHelper.PENDING_NAME).apply {
+            writeBytes(ByteArray(100))
+        }
+        RestoreHelper.markCredentialsNeedReset(context)
+
+        assertFalse(RestoreHelper.consumeCredentialsReset(context))
+
+        pending.delete()
+        // 重启替换成功之后才轮到重置账号
+        assertTrue(RestoreHelper.consumeCredentialsReset(context))
+    }
+
+    @Test
+    fun `重置标记只消费一次`() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        RestoreHelper.markCredentialsNeedReset(context)
+
+        assertTrue(RestoreHelper.consumeCredentialsReset(context))
+        // 第二次不该再触发一遍，否则每次回前台都提示「已从备份恢复」
+        assertFalse(RestoreHelper.consumeCredentialsReset(context))
     }
 }

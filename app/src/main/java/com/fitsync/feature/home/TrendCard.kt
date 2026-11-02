@@ -24,7 +24,6 @@ import com.fitsync.feature.detail.Sparkline
 import com.fitsync.ui.components.MiuixCard
 import com.fitsync.ui.components.MiuixSegmentedControl
 import com.fitsync.ui.theme.MiuiText1
-import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
 import top.yukonga.miuix.kmp.basic.Text
 

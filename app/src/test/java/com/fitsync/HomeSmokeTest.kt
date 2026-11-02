@@ -179,6 +179,7 @@ class HomeSmokeTest {
             importUploadService = buildImportUploadService(repository),
             aliasStore = AccountAliasStore(ApplicationProvider.getApplicationContext()),
             rateLimitGate = RateLimitGate(ApplicationProvider.getApplicationContext()),
+            copyLedger = HealthCopyLedger(ApplicationProvider.getApplicationContext()),
         )
     }
 

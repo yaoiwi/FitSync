@@ -23,6 +23,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 上一次如果是从备份恢复的，这里补一次善后：账号标成「需重新登录」
+        syncCoordinator.consumeRestoreFlags()
         setContent {
             // 崩溃栈是落盘的，这里读取上一次崩溃记录；命中则先展示，方便真机上报
             var crashTrace by remember { mutableStateOf(CrashStore.load(applicationContext)) }

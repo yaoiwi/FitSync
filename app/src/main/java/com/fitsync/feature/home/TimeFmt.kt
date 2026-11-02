@@ -27,6 +27,10 @@ object TimeFmt {
     private val monthIso = fmt("yyyy-MM")
     private val clockShort = fmt("MM-dd HH:mm")
     private val clockFull = fmt("yyyy-MM-dd HH:mm")
+    private val dayClock = fmt("M月d日 HH:mm")
+    private val fileStamp = fmt("yyyyMMdd-HHmm")
+    private val hourMinute = fmt("HH:mm")
+    private val monthDayClock = fmt("M-d HH:mm")
 
     /** 2026-11-02 */
     fun day(ms: Long): String = local(ms).format(dayIso)
@@ -46,6 +50,23 @@ object TimeFmt {
 
     /** 2026-11-02 14:30 */
     fun clockFull(ms: Long): String = local(ms).format(clockFull)
+
+    /** 11月2日 14:30 */
+    fun dayClock(ms: Long): String = local(ms).format(dayClock)
+
+    /** 14:30 */
+    fun hourMinute(ms: Long): String = local(ms).format(hourMinute)
+
+    /** 11-2 14:30（不在今年时用不上年份，紧凑一点） */
+    fun monthDayClock(ms: Long): String = local(ms).format(monthDayClock)
+
+    /**
+     * 备份文件名用的时间戳：20261102-1430。
+     *
+     * 以前文件名写死 `fitsync-backup.db`，第二次备份系统自动加 `(1)`、`(2)`，
+     * 攒几份之后按文件名根本分不出哪份新——恢复时只能靠猜。
+     */
+    fun fileStamp(ms: Long = System.currentTimeMillis()): String = local(ms).format(fileStamp)
 
     private fun local(ms: Long): LocalDateTime =
         Instant.ofEpochMilli(ms).atZone(ZoneId.systemDefault()).toLocalDateTime()

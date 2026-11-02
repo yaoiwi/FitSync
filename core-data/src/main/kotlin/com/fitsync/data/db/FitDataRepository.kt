@@ -25,6 +25,9 @@ interface FitDataRepository {
     ): AccountEntity?
     suspend fun upsertAccount(account: AccountEntity): Long
     suspend fun updateAccountStatus(accountId: Long, status: String, lastSyncAtMs: Long)
+
+    /** 见 [AccountDao.markAllStatus]：恢复备份后统一标成「需重新登录」 */
+    suspend fun markAllAccountsStatus(status: String)
     suspend fun upsertCapability(cap: AccountCapabilityEntity)
     suspend fun getCapability(accountId: Long): AccountCapabilityEntity?
     suspend fun deleteAccount(accountId: Long)

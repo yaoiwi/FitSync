@@ -1,6 +1,7 @@
 package com.fitsync.feature.detail
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -31,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import com.fitsync.data.settings.HealthCopyLedger
 import com.fitsync.feature.home.HomeViewModel
+import com.fitsync.feature.home.TimeFmt
 import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.GlassHost
 import com.fitsync.ui.components.HyperPage
@@ -338,12 +340,55 @@ fun CopyHealthScreen(
     val remaining = progress?.let {
         HealthCopyLedger.remainingDays(it.oldestDate, dayOptions[dayIndex], LocalDate.now())
     }
+    // 上次没跑完（进程被清掉 / 撞限流主动停）：只有进这个页面才读，不打扰首页
+    val interrupted = remember(syncState.syncing, syncState.message) { viewModel.interruptedCopy() }
 
     DataActionPage(
         title = "搬运健康数据",
         subtitle = "把主账号的健康数据转发到另一账号",
         onBack = onBack,
     ) {
+        if (interrupted != null && !syncState.syncing) {
+            item {
+                MiuixCard {
+                    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 16.dp)) {
+                        Text(
+                            text = "上次搬运没跑完",
+                            fontSize = 16.sp,
+                            color = MiuiText1,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "上次选的是 ${interrupted.days} 天范围，中途停下了" +
+                                "（锁屏被系统清掉，或撞到限流）。已经搬过去的天数都记着，" +
+                                "继续会从断点往前走，不会重来。",
+                            fontSize = 12.sp,
+                            lineHeight = 18.sp,
+                            color = MiuixSummary,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            MiuixTextButton(
+                                text = "不再提示",
+                                onClick = { viewModel.dismissInterruptedCopy() },
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            MiuixPrimaryButton(
+                                text = "继续搬运",
+                                onClick = {
+                                    viewModel.setCopyHealthDays(interrupted.days)
+                                    viewModel.dismissInterruptedCopy()
+                                    ensureNotification { viewModel.copyHealthToOtherAccount() }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+        }
         item {
             MiuixSectionTitle("搬运范围")
             MiuixCard {
@@ -642,9 +687,7 @@ fun ExportScreen(
     }
 }
 
-private fun exportFileName(ext: String): String =
-    "fitsync-" + java.text.SimpleDateFormat("yyyyMMdd-HHmm", java.util.Locale.CHINA)
-        .format(java.util.Date()) + "." + ext
+private fun exportFileName(ext: String): String = "fitsync-${TimeFmt.fileStamp()}.$ext"
 
 // ============================ 公共骨架 ============================
 

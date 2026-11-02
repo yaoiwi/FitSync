@@ -119,4 +119,51 @@ class HealthCopyLedgerTest {
         assertEquals(30, HealthCopyLedger.remainingDays("not-a-date", 30, today))
         assertEquals(0, HealthCopyLedger.remainingDays("2026-11-02", 0, today))
     }
+
+    // ==================== 中断标记 ====================
+
+    @Test
+    fun `开始时记下范围，重启后能读回同一个断点`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markRunning(3L, 4L, days = 365)
+
+        // 新建一个实例模拟「进程被杀后重新启动」：只能靠盘上的痕迹
+        val restarted = HealthCopyLedger(context)
+        val mark = restarted.interruptedRun()
+        assertEquals(3L, mark?.fromAccountId)
+        assertEquals(4L, mark?.toAccountId)
+        assertEquals(365, mark?.days)
+    }
+
+    @Test
+    fun `正常搬完清掉标记后不再提示`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markRunning(3L, 4L, days = 7)
+        ledger.clearRunning(3L, 4L)
+        assertNull(HealthCopyLedger(context).interruptedRun())
+    }
+
+    @Test
+    fun `换一对账号搬运会覆盖旧标记，只留一条`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markRunning(3L, 4L, days = 7)
+        ledger.markRunning(5L, 6L, days = 30)
+
+        val mark = ledger.interruptedRun()
+        assertEquals(5L, mark?.fromAccountId)
+        assertEquals(6L, mark?.toAccountId)
+        assertEquals(30, mark?.days)
+    }
+
+    @Test
+    fun `用户选择不再提示时所有标记都清掉`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markRunning(3L, 4L, days = 7)
+        ledger.markCopied(3L, 4L, "2026-10-01")
+        ledger.dismissAllRunMarks()
+
+        assertNull(ledger.interruptedRun())
+        // 只清「在跑」标记，搬运记账本身不能丢，否则会重搬
+        assertEquals(setOf("2026-10-01"), ledger.copiedDates(3L, 4L))
+    }
 }

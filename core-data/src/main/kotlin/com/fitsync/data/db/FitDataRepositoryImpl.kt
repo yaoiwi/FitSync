@@ -68,6 +68,9 @@ class FitDataRepositoryImpl @Inject constructor(
     override suspend fun updateAccountStatus(accountId: Long, status: String, lastSyncAtMs: Long) =
         accountDao.updateStatus(accountId, status, lastSyncAtMs)
 
+    override suspend fun markAllAccountsStatus(status: String) =
+        accountDao.markAllStatus(status)
+
     override suspend fun upsertCapability(cap: AccountCapabilityEntity) =
         capDao.upsert(cap)
 
