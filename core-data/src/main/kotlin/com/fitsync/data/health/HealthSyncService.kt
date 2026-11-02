@@ -119,7 +119,7 @@ class HealthSyncService @Inject constructor(
             get() = buildList {
                 if (skippedExisting > 0) add("目标账号这 $skippedExisting 天本地已有数据")
                 if (skippedCopied > 0) add("另外 $skippedCopied 天之前已经搬过")
-                if (duplicateDays > 0) add("$duplicateDays 天目标账号已有同样文件")
+                if (duplicateDays > 0) add("$duplicateDays 天目标账号本来就有同样的文件（409，未重复写入）")
                 if (partiallyDone > 0) add("$partiallyDone 天只传上去一部分（缺的睡眠/压力等再点一次会补）")
                 if (noDataDays > 0) add("$noDataDays 天源账号没有数据")
             }
@@ -272,12 +272,19 @@ class HealthSyncService @Inject constructor(
         val fullyPresent = { date: String ->
             date in localDates && (!trustLocalDaily || date in localSleepDates)
         }
-        val copiedDates = copyLedger.copiedDates(fromAccountId, toAccountId)
+        // 台账记到文件级，所以不能按「日期在不在台账里」一刀切：同一天可能只搬了一半
+        // （monitoring 进去了，睡眠要到第二天才在云端生成）。见 [HealthCopyLedger.needsCopy]。
+        val records = copyLedger.records(fromAccountId, toAccountId)
+        val nowMs = System.currentTimeMillis()
         val wantedDates = (0 until span)
             .map { LocalDate.now().minusDays(it.toLong()).toString() }
-        val pending = wantedDates.filter { !fullyPresent(it) && it !in copiedDates }
+        val pending = wantedDates.filter {
+            !fullyPresent(it) && HealthCopyLedger.needsCopy(records[it], nowMs)
+        }
         val skippedExisting = wantedDates.count { fullyPresent(it) }
-        val skippedCopied = wantedDates.count { !fullyPresent(it) && it in copiedDates }
+        val skippedCopied = wantedDates.count {
+            !fullyPresent(it) && !HealthCopyLedger.needsCopy(records[it], nowMs)
+        }
 
         if (pending.isEmpty()) {
             return@withContext Result(
@@ -342,6 +349,8 @@ class HealthSyncService @Inject constructor(
                                         sourceToken = sourceCredential.accessToken,
                                         toRegion = toRegion,
                                         target = targetCredential,
+                                        // 这天已经确认过的文件，比对时直接跳过，不再发上传请求
+                                        known = records[date]?.files.orEmpty(),
                                     )
                                 }
                             }
@@ -352,17 +361,16 @@ class HealthSyncService @Inject constructor(
                             DayOutcome.Kind.UPLOADED -> {
                                 uploadedDays++
                                 uploadedDates += day.date
-                                copyLedger.markCopied(fromAccountId, toAccountId, day.date)
                                 pacer.noteCleanDay()
                             }
                             DayOutcome.Kind.DUPLICATE -> {
                                 // 409 也算搬完了：目标账号本来就有这天的文件
                                 duplicateDays++
                                 uploadedDates += day.date
-                                copyLedger.markCopied(fromAccountId, toAccountId, day.date)
                                 pacer.noteCleanDay()
                             }
-                            // 有文件进、有文件没进：不计入「已搬」，也不写记录，下次会重试这天
+                            // 有文件进、有文件没进：不算「已搬」，但那几个进去的仍要记账，
+                            // 下次重试只补没进去的
                             DayOutcome.Kind.PARTIAL -> {
                                 partialDays++
                                 if (messages.size < MAX_MESSAGES) messages += day.message
@@ -388,6 +396,17 @@ class HealthSyncService @Inject constructor(
                         }
                         // 被取消的那天没发过请求，不该计入进度
                         if (day.kind == DayOutcome.Kind.CANCELLED) continue
+                        // 记账按文件粒度：上传成功、服务端 409 判重、以及台账里已有而跳过的，
+                        // 都算「确认躺在目标账号上」。下次只补包里新增的（比如后到的睡眠）
+                        // 和上次没传上的。
+                        if (day.confirmed.isNotEmpty()) {
+                            copyLedger.markFiles(
+                                fromAccountId,
+                                toAccountId,
+                                day.date,
+                                day.confirmed,
+                            )
+                        }
                         processedDays++
                         onProgress?.invoke(processedDays, pending.size)
                     }
@@ -440,6 +459,14 @@ class HealthSyncService @Inject constructor(
         val date: String,
         val kind: Kind,
         val message: String = "",
+        /**
+         * 这一天「确认已经在目标账号上」的文件指纹。
+         *
+         * 三个来源：这次上传成功、服务端 409 判重（目标账号本来就有）、
+         * 台账里已有而直接跳过的。外层拿它去更新台账，所以部分成功的那天
+         * 下次只会重传没进去的那几个文件。
+         */
+        val confirmed: Set<String> = emptySet(),
     ) {
         enum class Kind {
             UPLOADED,
@@ -459,6 +486,10 @@ class HealthSyncService @Inject constructor(
      * 抽成独立函数是为了让外层能两天并行；串行调用时行为和以前完全一致。
      * 每天的间隔（[UPLOAD_GAP_MS] / [DAY_GAP_MS]）留在函数内部，
      * 并行时两个工人各自等，不会把请求挤成一簇。
+     *
+     * @param known 台账里已经确认在这天成功上传过的文件指纹。命中的文件**不发请求**，
+     *   只把指纹原样带回 [DayOutcome.confirmed]。这是「第二天补睡眠」能便宜的原因：
+     *   已传过的 monitoring 等 0 请求跳过，只有新出现的睡眠才真正上传。
      */
     private suspend fun copyOneDay(
         date: String,
@@ -466,6 +497,7 @@ class HealthSyncService @Inject constructor(
         sourceToken: String,
         toRegion: AccountRegion,
         target: StorableCredential,
+        known: Set<String> = emptySet(),
     ): DayOutcome {
         // 一天一个 zip，里面通常 1~3 个 FIT（monitoring / sleep / stress）
         val zip = try {
@@ -498,9 +530,22 @@ class HealthSyncService @Inject constructor(
         // 所以必须逐个记账——只要有一个没进去，这天就不能算搬完。
         var okCount = 0
         var dupCount = 0
+        var skippedCount = 0
         val failures = mutableListOf<String>()
+        val confirmed = mutableSetOf<String>()
 
-        for (fit in fits) {
+        // 一次算出全部指纹：后面既要用它跟台账比对，又要原样带回去记账。
+        // 必须整组算，单个算不出「同类型同大小的第几个」，两个 418 字节的分片会撞成同一个。
+        val ids = WellnessPackage.fingerprints(fits)
+        for ((index, fit) in fits.withIndex()) {
+            val id = ids[index]
+            // 台账里已经有：目标账号确实收过这个文件，连请求都不用发。
+            // 隔天复查时「昨天传过的 monitoring」就走这条路，0 请求。
+            if (id in known) {
+                skippedCount++
+                confirmed += id
+                continue
+            }
             val outcome = connectClient.uploadActivityFileOutcome(
                 region = toRegion,
                 accessToken = target.accessToken,
@@ -511,14 +556,26 @@ class HealthSyncService @Inject constructor(
                 fieldName = WELLNESS_FORM_FIELD,
             )
             when {
-                outcome.ok -> okCount++
+                outcome.ok -> {
+                    okCount++
+                    confirmed += id
+                }
                 // 409：目标账号已有这个文件。别的文件该传还得传
-                outcome.duplicate -> dupCount++
+                outcome.duplicate -> {
+                    dupCount++
+                    confirmed += id
+                }
                 else -> {
                     failures += "${fit.name}（${outcome.errorText.ifBlank { "HTTP ${outcome.code}" }}）"
                     if (outcome.code == 429) {
                         rateLimitGate.noteRateLimited()
-                        return DayOutcome(date, DayOutcome.Kind.RATE_LIMITED, "$date：${limitNote()}")
+                        // 已经进去的那几个文件照样要记账，下次只补没传的
+                        return DayOutcome(
+                            date,
+                            DayOutcome.Kind.RATE_LIMITED,
+                            "$date：${limitNote()}",
+                            confirmed,
+                        )
                     }
                 }
             }
@@ -526,22 +583,33 @@ class HealthSyncService @Inject constructor(
         }
 
         delay(DAY_GAP_MS)
+        val handled = okCount + dupCount + skippedCount
         return when {
-            // 全部收下（新增或已存在）才算这天完成，才可以写进搬运记录
-            failures.isEmpty() && okCount > 0 -> DayOutcome(date, DayOutcome.Kind.UPLOADED)
-            failures.isEmpty() -> DayOutcome(date, DayOutcome.Kind.DUPLICATE)
-            // 部分成功：常见于 monitoring 进去了、睡眠被拒。此时「不写记录」，
-            // 下次点搬运会再取一次这天——已成功的那个文件服务端返回 409 一闪而过，
-            // 真正重试的只有失败的那个。这是唯一能把缺失的睡眠补回来的方式。
-            okCount + dupCount > 0 -> DayOutcome(
+            // 包里每个文件都确认在目标账号上了，这天才算完成
+            failures.isEmpty() && handled > 0 -> DayOutcome(
+                date,
+                if (okCount > 0) DayOutcome.Kind.UPLOADED else DayOutcome.Kind.DUPLICATE,
+                confirmed = confirmed,
+            )
+            failures.isEmpty() -> DayOutcome(
+                date,
+                DayOutcome.Kind.NO_DATA,
+                "$date：包内没有可搬的文件",
+                confirmed,
+            )
+            // 部分成功：常见于 monitoring 进去了、睡眠被拒。这次只记下进去的那几个，
+            // 下次点搬运时它们按指纹命中、0 请求跳过，真正重试的只有失败的那个。
+            handled > 0 -> DayOutcome(
                 date,
                 DayOutcome.Kind.PARTIAL,
                 "$date：${fits.size} 个文件里 ${failures.size} 个没传上（${failures.first()}），下次会重试",
+                confirmed,
             )
             else -> DayOutcome(
                 date,
                 DayOutcome.Kind.FAILED,
                 "$date：${failures.firstOrNull() ?: "上传未成功"}",
+                confirmed,
             )
         }
     }

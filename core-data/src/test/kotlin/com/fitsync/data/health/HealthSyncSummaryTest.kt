@@ -55,7 +55,8 @@ class HealthSyncSummaryTest {
             uploadedDates = listOf("2026-10-29"),
         ).summary
         assertTrue(summary, summary.contains("已搬运 1 天"))
-        assertTrue(summary, summary.contains("2 天目标账号已有同样文件"))
+        assertTrue(summary, summary.contains("2 天目标账号本来就有同样的文件"))
+        assertTrue("要说明没重复写入：$summary", summary.contains("未重复写入"))
     }
 
     @Test

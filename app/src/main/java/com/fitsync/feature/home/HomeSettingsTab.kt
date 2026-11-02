@@ -145,12 +145,16 @@ internal fun SettingsTab(
     // 最近一次失败的请求快照：403 光看状态码分不清是「没带令牌」还是「网络被拦」，
     // 这里把证据摆在设置页，用户能直接复制发出来
     var lastFailure by remember { mutableStateOf<GarminDiagnostics.Entry?>(null) }
+    // 409「目标账号已有」不是失败：没有真失败时用它当摘要，
+    // 否则搬完一次、12 个文件全 409，这里会写着「最近一次失败」吓人
+    var dupNote by remember { mutableStateOf<String?>(null) }
     var showDiagnostics by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) {
         while (true) {
             cooldownMs = rateLimitRemainingMs()
             strikes = rateLimitStrikes()
             lastFailure = GarminDiagnostics.latest()
+            dupNote = GarminDiagnostics.expectedNote()
             delay(1_000L)
         }
     }
@@ -211,7 +215,7 @@ internal fun SettingsTab(
                     summary = lastFailure?.let {
                         "最近一次失败：HTTP ${it.code} · ${it.endpoint}" +
                             if (it.tokenLength == 0) "（请求没带令牌）" else ""
-                    } ?: "暂无失败记录",
+                    } ?: dupNote ?: "暂无失败记录",
                     showArrow = true,
                     onClick = { showDiagnostics = true },
                 )

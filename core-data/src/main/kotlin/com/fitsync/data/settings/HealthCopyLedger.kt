@@ -8,14 +8,26 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /**
- * 记录「哪一天的健康数据刚搬到哪个账号」。
+ * 记录「哪一天的哪些文件已经搬到哪个账号」。
  *
  * **为什么需要单独记**：搬运成功后，目标账号的本地日汇总要等一次同步才会出现。
  * 在这之前再点一次搬运，会重复下载 + 重复上传（服务端返回 409 判重）。
  * 记一下，[SKIP_WINDOW_MS] 内点第二次就不再重复打接口。
  *
- * **为什么带时间戳而不是只记日期**：只记日期的话，用户若怀疑没搬成功，
- * 就永远被跳过、也没法重试。超过窗口自动失效，重试是允许的。
+ * **为什么记到文件级而不是只记日期**：一天的健康数据是「一个 zip 里装几个 FIT」
+ * （monitoring / sleep / stress），上传接口是按**文件**判重、也是按**文件**失败的。
+ * 只记日期会有两个后果：
+ *
+ * 1. 今天搬的时候手表还没把今早的睡眠传上云端，包里只有 monitoring；这一天照样被
+ *    记成「搬完了」，第二天再搬直接跳过 —— 那天的睡眠永远补不上；
+ * 2. 一天里 monitoring 传成功、睡眠被拒，这天不算搬完，下次重试时 monitoring 会再传
+ *    一遍（409 一闪而过），白打一个请求。
+ *
+ * 记下文件名之后，这两件事都变成「比对集合、只传缺的」。
+ *
+ * **为什么带时间戳**：一是超出 [SKIP_WINDOW_MS] 的记录自动失效（用户怀疑没搬成功
+ * 时仍能重试）；二是最近处理过的日期要**重新核一遍**——有睡眠的看
+ * [RECHECK_WINDOW_MS]，还没有睡眠的看 [SLEEP_WAIT_WINDOW_MS]，见 [needsCopy]。
  *
  * **为什么在内存里攒着、隔几天才落盘**：一年期搬运要记 365 次。原来每次都是
  * 「读全量字符串 → 逐项解析 → 拼回去 → 写 XML」，365 次就是 O(n²) 的字符串解析
@@ -30,32 +42,102 @@ class HealthCopyLedger @Inject constructor(
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** `from_to` → (日期 → 记账时间)。进程内唯一真相，[prefs] 只是它的持久化副本 */
-    private val cache = mutableMapOf<String, MutableMap<String, Long>>()
+    /** `from_to` → (日期 → 记账)。进程内唯一真相，[prefs] 只是它的持久化副本 */
+    private val cache = mutableMapOf<String, MutableMap<String, DayRecord>>()
 
     /** 哪些键有未落盘的改动 */
     private val dirty = mutableSetOf<String>()
     private var pendingWrites = 0
+
+    /**
+     * 某一天的记账。
+     *
+     * [files] 是「已确认躺在目标账号上的文件指纹」（见 `WellnessPackage.fingerprints`）。
+     * 空集合表示这一天处理过、但不知道具体是哪些文件 —— 老版本写的记录就是这样，
+     * 下次复查时会自然补全。
+     */
+    data class DayRecord(
+        val atMs: Long,
+        val files: Set<String>,
+    ) {
+        /**
+         * 这天已经确认「有睡眠文件」。
+         *
+         * 有睡眠说明数据齐了，复查 3 天就够；没有就得一直盯着——
+         * 可能只是手表还没把睡眠传上去，不代表那天没有。
+         */
+        fun hasSleep(): Boolean = files.any { it.startsWith(SLEEP_PREFIX) }
+    }
 
     /** 刚搬过的日期：在 [SKIP_WINDOW_MS] 内、且没被判定为「这天不用搬」的才在里面 */
     @Synchronized
     fun copiedDates(fromAccountId: Long, toAccountId: Long): Set<String> =
         alive(key(fromAccountId, toAccountId)).keys.toSet()
 
+    /** 一次取整个账号对的记账，避免按天逐个加锁（365 天就是 365 次） */
+    @Synchronized
+    fun records(fromAccountId: Long, toAccountId: Long): Map<String, DayRecord> =
+        alive(key(fromAccountId, toAccountId)).toMap()
+
+    @Synchronized
+    fun dayRecord(fromAccountId: Long, toAccountId: Long, date: String): DayRecord? =
+        alive(key(fromAccountId, toAccountId))[date]
+
     // 搬运两天并行，读-改-写必须串行，否则两个工人的写入会互相覆盖，
     // 表现是「明明搬过，下一轮又重搬」——白白多打几百个请求。
     @Synchronized
-    fun markCopied(fromAccountId: Long, toAccountId: Long, date: String) {
+    fun markFiles(
+        fromAccountId: Long,
+        toAccountId: Long,
+        date: String,
+        files: Collection<String>,
+    ) {
         val k = key(fromAccountId, toAccountId)
         val map = alive(k)
-        map[date] = System.currentTimeMillis()
+        // 增量合并而不是替换：下次只传「包里有、台账里没有」的那些文件。
+        // 替换会把上一轮成功过的文件从台账里抹掉，下一轮又要重传一遍。
+        val prev = map[date]?.files.orEmpty()
+        map[date] = DayRecord(System.currentTimeMillis(), prev + files)
         dirty += k
         if (++pendingWrites >= FLUSH_EVERY) flushLocked()
     }
 
+    /** 不知道文件明细时用这个（导入写回每天只有一个 monitoring 文件） */
+    @Synchronized
+    fun markCopied(fromAccountId: Long, toAccountId: Long, date: String) =
+        markFiles(fromAccountId, toAccountId, date, emptyList())
+
     /** 把攒下的记账写回磁盘。搬运结束时一定要调一次，否则最后十几条只在内存里 */
     @Synchronized
     fun flush() = flushLocked()
+
+    /**
+     * 作废最近 [days] 天的记账，逼下一次搬运重新核对这几天。
+     *
+     * 「补齐最近几天」按钮用它：正常流程里，没睡眠的日期要等到窗口过期（14 天）
+     * 才会停止复查，有睡眠的 3 天后就跳过；用户想立刻再核一遍时，只能先把这几天
+     * 的记录删掉，否则 `needsCopy` 会直接把它们判成「已经搬过」。
+     *
+     * 只删日期落在 `今天 ~ 今天-(days-1)` 的记录，更早的断点不受影响。
+     */
+    @Synchronized
+    fun forgetRecent(
+        fromAccountId: Long,
+        toAccountId: Long,
+        days: Int,
+        today: LocalDate = LocalDate.now(),
+    ) {
+        if (days <= 0) return
+        val k = key(fromAccountId, toAccountId)
+        val map = alive(k)
+        // 日期是 yyyy-MM-dd，字典序即时间序
+        val cutoff = today.minusDays((days - 1).toLong()).toString()
+        val removed = map.keys.filter { it >= cutoff }
+        if (removed.isEmpty()) return
+        removed.forEach { map.remove(it) }
+        dirty += k
+        flushLocked()
+    }
 
     @Synchronized
     fun clear(fromAccountId: Long, toAccountId: Long) {
@@ -79,7 +161,7 @@ class HealthCopyLedger @Inject constructor(
             // 日期是 yyyy-MM-dd，字典序即时间序
             oldestDate = map.keys.min(),
             copiedDays = map.size,
-            lastAtMs = map.values.max(),
+            lastAtMs = map.values.maxOf { it.atMs },
         )
     }
 
@@ -146,10 +228,10 @@ class HealthCopyLedger @Inject constructor(
     }
 
     /** 读某个键的活记录，顺手丢掉过期项 */
-    private fun alive(k: String): MutableMap<String, Long> {
+    private fun alive(k: String): MutableMap<String, DayRecord> {
         val map = cache.getOrPut(k) { load(k) }
         val now = System.currentTimeMillis()
-        map.entries.removeAll { now - it.value >= SKIP_WINDOW_MS }
+        map.entries.removeAll { now - it.value.atMs >= SKIP_WINDOW_MS }
         return map
     }
 
@@ -162,7 +244,7 @@ class HealthCopyLedger @Inject constructor(
         val editor = prefs.edit()
         for (k in dirty) {
             val map = cache[k] ?: continue
-            val text = map.entries.joinToString(",") { "${it.key}=${it.value}" }
+            val text = map.entries.joinToString(",") { "${it.key}=${encode(it.value)}" }
             editor.putString(k, text)
         }
         editor.apply()
@@ -170,17 +252,40 @@ class HealthCopyLedger @Inject constructor(
         pendingWrites = 0
     }
 
-    /** 读 `日期=时间戳` 形式的记录，自动丢掉过期项 */
-    private fun load(k: String): MutableMap<String, Long> {
+    /** `时间戳` 或 `时间戳|文件1;文件2`。没有文件明细时写成前者，与老格式一致 */
+    private fun encode(record: DayRecord): String {
+        if (record.files.isEmpty()) return record.atMs.toString()
+        val files = record.files.joinToString(FILE_SEP) { it.replace(UNSAFE, "_") }
+        return "${record.atMs}|$files"
+    }
+
+    private fun decode(raw: String): DayRecord? {
+        val bar = raw.indexOf('|')
+        val ts = (if (bar >= 0) raw.substring(0, bar) else raw).toLongOrNull() ?: return null
+        // 老格式只有时间戳：知道这天处理过，不知道具体文件
+        if (bar < 0) return DayRecord(ts, emptySet())
+        val files = raw.substring(bar + 1)
+            .split(FILE_SEP)
+            .filter { it.isNotBlank() }
+            // 1.5.9 写的是 `sleep:173`（还没有组内序号），语义上就是「第一个
+            // 同类型同大小的文件」。补成 `sleep:173#1` 之后，新版算出来的指纹能直接命中，
+            // 升级不用把最近几天再传一遍；而当时漏掉的那个同大小文件正好补传。
+            .map { if ('#' in it) it else "$it#1" }
+            .toSet()
+        return DayRecord(ts, files)
+    }
+
+    /** 读 `日期=值` 形式的记录，自动丢掉过期项 */
+    private fun load(k: String): MutableMap<String, DayRecord> {
         val now = System.currentTimeMillis()
         return prefs.getString(k, null)
             ?.split(',')
             ?.mapNotNull { item ->
-                val parts = item.split('=')
+                val parts = item.split('=', limit = 2)
                 if (parts.size != 2) return@mapNotNull null
                 val date = parts[0].takeIf { it.length == 10 } ?: return@mapNotNull null
-                val ts = parts[1].toLongOrNull() ?: return@mapNotNull null
-                if (now - ts >= SKIP_WINDOW_MS) null else date to ts
+                val record = decode(parts[1]) ?: return@mapNotNull null
+                if (now - record.atMs >= SKIP_WINDOW_MS) null else date to record
             }
             ?.toMap()
             ?.toMutableMap()
@@ -195,6 +300,11 @@ class HealthCopyLedger @Inject constructor(
         private const val PREFS = "fitsync_health_copy_ledger"
 
         private const val RUNNING_PREFIX = "running_"
+
+        private const val FILE_SEP = ";"
+
+        /** 文件指纹里可能出现的分隔符，落盘前一律替换掉，避免把一条记录拆成两半 */
+        private val UNSAFE = Regex("[,;=|]")
 
         /**
          * 搬完的日期在这段时间内不再重复搬。
@@ -213,8 +323,56 @@ class HealthCopyLedger @Inject constructor(
          */
         const val SKIP_WINDOW_MS = 800L * 24 * 60 * 60 * 1000
 
+        /**
+         * 最近这么多天内处理过的日期，要重新核一遍文件集合。
+         *
+         * 睡眠数据在 Garmin 云端是**事后生成**的：今早醒来时手表可能还没把睡眠传上去，
+         * 当天搬到的包里就只有 monitoring。如果按「这天搬完了」一刀切，第二天再搬
+         * 会直接跳过，那天的睡眠就永远补不上。
+         *
+         * 3 天是给「已经确认有睡眠」的日期用的：数据齐了，多盯就是白下载。
+         * 还没出现睡眠的日期用 [SLEEP_WAIT_WINDOW_MS]，见 [needsCopy]。
+         */
+        const val RECHECK_WINDOW_MS = 3L * 24 * 60 * 60 * 1000
+
+        /**
+         * 还没出现睡眠的日期盯多久。
+         *
+         * 「今天搬了、包里只有步数」有两种可能：手表还没上传睡眠（过几天会有），
+         * 或者那天真没戴表睡（永远没有）。从包本身分不出来，所以只能多看几天。
+         *
+         * 3 天不够：手表放抽屉里一周再连手机是很常见的事，那时云端才补齐睡眠，
+         * 而按 3 天算，这天早就被跳过、再也不复查了。14 天覆盖「出差一周、
+         * 周末才同步」这种节奏；再长就没意义了，Garmin 自己也不会延迟这么久。
+         *
+         * 代价：每次搬运多下载几个包（一天一个请求，上传仍然是 0），可以忽略。
+         */
+        const val SLEEP_WAIT_WINDOW_MS = 14L * 24 * 60 * 60 * 1000
+
+        /** 指纹前缀，与 `WellnessPackage.kindOf` 保持一致 */
+        private const val SLEEP_PREFIX = "sleep:"
+
         /** 攒够这么多条落一次盘 */
         const val FLUSH_EVERY = 20
+
+        /**
+         * 这天还要不要去核一遍。
+         *
+         * 没记录过（[record] 为 null）当然要；有记录的，按「这天有没有睡眠」分两档：
+         *
+         * - 已经有睡眠：数据齐了，[RECHECK_WINDOW_MS] 内复查（可能又补了压力/身体电量），
+         *   更老的直接跳过；
+         * - 还没有睡眠：可能是还没生成，用 [SLEEP_WAIT_WINDOW_MS] 一直盯着，
+         *   直到睡眠出现或超过 14 天。老版本只有日期、没有文件明细的记录也走这一档，
+         *   复查一次顺带把指纹补全。
+         *
+         * 纯函数，方便单测。
+         */
+        fun needsCopy(record: DayRecord?, now: Long): Boolean {
+            if (record == null) return true
+            val window = if (record.hasSleep()) RECHECK_WINDOW_MS else SLEEP_WAIT_WINDOW_MS
+            return now - record.atMs < window
+        }
 
         /**
          * 按「记录里最老的一天」估算选定的跨度里还有多少天没搬。

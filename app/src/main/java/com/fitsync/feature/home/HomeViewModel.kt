@@ -337,6 +337,16 @@ class HomeViewModel @Inject constructor(
         syncCoordinator.copyHealthToOtherAccount(syncCoordinator.copyHealthDays.value)
 
     /**
+     * 补齐最近 3 天：先把这 3 天的记账作废，再重新下载核对一遍。
+     *
+     * 给「手表拖了几天才补传睡眠」兜底——正常流程里这段日期在 14 天窗口内本来就会复查，
+     * 但用户可能刚搬完就想再确认一次，这时 needsCopy 会判成「已经搬过」，
+     * 必须先把记录删掉才会真的重新下载。
+     */
+    fun recheckRecentCopy() =
+        syncCoordinator.copyHealthToOtherAccount(days = 3, forgetRecentDays = 3)
+
+    /**
      * 上一次搬运停在哪（最老的一天）。
      *
      * 搬运页用它告诉用户「这次会从哪天接着往前搬」，而不是笼统地说「再点一次会接着做」——

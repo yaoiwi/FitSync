@@ -615,7 +615,7 @@ class SyncCoordinator @Inject constructor(
         }
     }
 
-    fun copyHealthToOtherAccount(days: Int = 7) {
+    fun copyHealthToOtherAccount(days: Int = 7, forgetRecentDays: Int = 0) {
         if (isLongTaskRunning()) {
             _state.value = UiState(syncing = false, message = "已经有一个长任务在跑，等它结束再试")
             return
@@ -629,6 +629,11 @@ class SyncCoordinator @Inject constructor(
             }
             val pair = pickTwoAccounts("搬运") ?: return@launchLongTask
             val (from, to) = pair
+            // 「补齐最近几天」：先作废这几天的记账，否则 needsCopy 会判成「已经搬过」，
+            // 连下载都省了，等于什么都没补
+            if (forgetRecentDays > 0) {
+                copyLedger.forgetRecent(from.id, to.id, forgetRecentDays)
+            }
             val label = "${labelOf(from)} → ${labelOf(to)}"
             // 一年期搬运要 55 分钟：进前台服务，锁屏后 Doze 不会把网络掐掉
             startLongTaskService("搬运健康数据", "正在准备：$label")

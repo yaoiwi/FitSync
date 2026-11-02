@@ -447,6 +447,22 @@ fun CopyHealthScreen(
                             lineHeight = 17.sp,
                             color = MiuixSummary,
                         )
+                        // 用户主动要求「现在就再核一遍」时用：正常流程会按窗口自己复查，
+                        // 但这个按钮能立刻重来，不用等 3 天/14 天的计时
+                        Spacer(Modifier.height(8.dp))
+                        MiuixTextButton(
+                            text = "重新核对最近 3 天",
+                            onClick = {
+                                ensureNotification { viewModel.recheckRecentCopy() }
+                            },
+                        )
+                        Text(
+                            text = "把这 3 天的记账作废再下载一次，只补新出现的文件。" +
+                                "手表拖了几天才把睡眠传上云时，用这个不用等自动复查",
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp,
+                            color = MiuixSummary.copy(alpha = 0.85f),
+                        )
                     }
                 }
             }
@@ -459,6 +475,8 @@ fun CopyHealthScreen(
                 BulletLine("一天一个数据包，睡眠、压力、身体电量都在里面一起搬，不用单独操作")
                 MiuixDivider(startIndent = 18)
                 BulletLine("某天只有部分文件传上去时不算完成，这次不记账，再点一次会只补缺的那个（比如睡眠）")
+                MiuixDivider(startIndent = 18)
+                BulletLine("搬过的日期开工前直接跳过、不再发请求；最近 3 天会再核对一次文件清单，还没出现睡眠的日期会一直盯到 14 天——手表隔了一周才补传也接得住")
                 MiuixDivider(startIndent = 18)
                 BulletLine("目标账号已有同一天的文件会跳过，不覆盖、不删除原有数据")
                 MiuixDivider(startIndent = 18)
@@ -558,7 +576,8 @@ fun CopyHealthScreen(
                             "（默认两天并行，连续 20 天没被限流会自动提到三天，撞到 429 就退回一天）。" +
                             "开始后通知栏会有一条常驻进度，可以锁屏、切到别的应用，只要通知还在就还在搬；" +
                             "想停随时点通知里的「停止」。中断不会白跑：已搬的天数都保留，下次会从断点接着搬。" +
-                            "已经搬过的日期会在开工前跳过，不会再打一遍请求。",
+                            "已经搬过的日期会在开工前跳过，不会再打一遍请求；只有最近 3 天会再核对一次" +
+                            "文件清单——手表当晚才补传的睡眠就是靠这一步补进去的。",
                         fontSize = 12.sp,
                         lineHeight = 18.sp,
                         color = MiuixSummary,

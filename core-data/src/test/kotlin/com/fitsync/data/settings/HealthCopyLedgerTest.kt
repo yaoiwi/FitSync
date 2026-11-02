@@ -193,4 +193,215 @@ class HealthCopyLedgerTest {
         // 只清「在跑」标记，搬运记账本身不能丢，否则会重搬
         assertEquals(setOf("2026-10-01"), ledger.copiedDates(3L, 4L))
     }
+
+    // ==================== 文件级记账 ====================
+    //
+    // 以前只记「这天搬过了」。睡眠在 Garmin 云端是事后生成的：今天搬的时候手表还没
+    // 把今早的睡眠传上去，包里只有 monitoring，照样被记成搬完，第二天再搬直接跳过，
+    // 那天的睡眠就永远补不上。改成记「这天哪些文件已经确认在目标账号上」。
+
+    @Test
+    fun `同一天的几个文件都能读回`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markFiles(1L, 2L, "2026-11-02", setOf("monitor:400", "sleep:41794"))
+
+        val record = ledger.dayRecord(1L, 2L, "2026-11-02")
+        assertEquals(setOf("monitor:400", "sleep:41794"), record?.files)
+        // 日期级的判断仍然成立，搬运页的「已搬天数」不受影响
+        assertTrue("2026-11-02" in ledger.copiedDates(1L, 2L))
+    }
+
+    @Test
+    fun `同一天再记新文件是合并而不是替换`() {
+        // 「第二天补睡眠」能成立的前提：昨天记的 monitor 不能被今天的 sleep 挤掉，
+        // 否则明天又得把 monitor 重传一遍
+        val ledger = HealthCopyLedger(context)
+        ledger.markFiles(1L, 2L, "2026-11-02", setOf("monitor:400"))
+        ledger.markFiles(1L, 2L, "2026-11-02", setOf("sleep:41794"))
+
+        assertEquals(
+            setOf("monitor:400", "sleep:41794"),
+            ledger.dayRecord(1L, 2L, "2026-11-02")?.files,
+        )
+    }
+
+    @Test
+    fun `文件集合能跨进程读回`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markFiles(1L, 2L, "2026-11-01", setOf("monitor:400#1", "sleep:173#1"))
+        ledger.flush()
+
+        val restarted = HealthCopyLedger(context)
+        assertEquals(
+            setOf("monitor:400#1", "sleep:173#1"),
+            restarted.dayRecord(1L, 2L, "2026-11-01")?.files,
+        )
+    }
+
+    @Test
+    fun `老版本只记了日期的记录读回来文件集合为空`() {
+        // 1.5.8 之前写的是 `日期=时间戳`，没有文件明细。
+        // 读的时候不能当成损坏，否则升级后会把最近几百天全部重搬一遍
+        val now = System.currentTimeMillis()
+        context.getSharedPreferences("fitsync_health_copy_ledger", Context.MODE_PRIVATE)
+            .edit().putString("copy_1_2", "2026-10-01=$now").commit()
+
+        val record = HealthCopyLedger(context).dayRecord(1L, 2L, "2026-10-01")
+        assertEquals(emptySet<String>(), record?.files)
+        assertEquals(now, record!!.atMs)
+    }
+
+    @Test
+    fun `指纹里的分隔符不会把一条记录拆成两半`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.markFiles(1L, 2L, "2026-11-02", setOf("weird,name=1;x:400"))
+        ledger.flush()
+
+        val restarted = HealthCopyLedger(context)
+        assertEquals(1, restarted.dayRecord(1L, 2L, "2026-11-02")?.files?.size)
+    }
+
+    @Test
+    fun `1_5_9 写下的无序号指纹读回来自动补序号`() {
+        // 1.5.9 的格式是 `sleep:173`，语义上就是「第一个同类型同大小的文件」。
+        // 补成 `sleep:173#1` 之后，1.6.0 算出来的指纹能直接命中，升级不用把最近几天再传一遍
+        val now = System.currentTimeMillis()
+        context.getSharedPreferences("fitsync_health_copy_ledger", Context.MODE_PRIVATE)
+            .edit().putString("copy_1_2", "2026-10-01=$now|sleep:173;monitor:418").commit()
+
+        val record = HealthCopyLedger(context).dayRecord(1L, 2L, "2026-10-01")
+        assertEquals(setOf("sleep:173#1", "monitor:418#1"), record?.files)
+    }
+
+    @Test
+    fun `有睡眠的日期复查三天就够`() {
+        val now = 1_800_000_000_000L
+        val day = 24L * 60 * 60 * 1000
+
+        // 没记录过 → 当然要搬
+        assertTrue(HealthCopyLedger.needsCopy(null, now))
+        // 刚搬过 → 要复查：那天后来可能多了压力/身体电量
+        assertTrue(
+            HealthCopyLedger.needsCopy(
+                HealthCopyLedger.DayRecord(now - 60_000, setOf("monitor:400#1", "sleep:41794#1")),
+                now,
+            ),
+        )
+        // 边界前两天 → 还在窗口内
+        assertTrue(
+            HealthCopyLedger.needsCopy(
+                HealthCopyLedger.DayRecord(now - 2 * day, setOf("sleep:41794#1")),
+                now,
+            ),
+        )
+        // 有睡眠、超过 3 天 → 跳过，不再下载
+        assertFalse(
+            HealthCopyLedger.needsCopy(
+                HealthCopyLedger.DayRecord(now - 4 * day, setOf("monitor:400#1", "sleep:41794#1")),
+                now,
+            ),
+        )
+    }
+
+    @Test
+    fun `没有睡眠的日期要盯到十四天`() {
+        val now = 1_800_000_000_000L
+        val day = 24L * 60 * 60 * 1000
+        val onlyMonitor = setOf("monitor:312#1")
+
+        // 第 4 天：有睡眠的早就跳过了，没有睡眠的还得继续看——
+        // 手表放抽屉里几天再连手机，云端那时才补齐睡眠
+        assertTrue(
+            "没有睡眠不能 3 天就放弃",
+            HealthCopyLedger.needsCopy(HealthCopyLedger.DayRecord(now - 4 * day, onlyMonitor), now),
+        )
+        assertTrue(
+            HealthCopyLedger.needsCopy(HealthCopyLedger.DayRecord(now - 10 * day, onlyMonitor), now),
+        )
+        assertTrue(
+            HealthCopyLedger.needsCopy(HealthCopyLedger.DayRecord(now - 13 * day, onlyMonitor), now),
+        )
+        // 14 天是上限：再往后基本可以认定「那天真没戴表睡」
+        assertFalse(
+            HealthCopyLedger.needsCopy(HealthCopyLedger.DayRecord(now - 15 * day, onlyMonitor), now),
+        )
+    }
+
+    @Test
+    fun `老格式没有文件明细时按没睡眠处理`() {
+        // 1.5.8 之前只有时间戳，不知道那天有没有睡眠。按「没有」处理，
+        // 14 天内复查一次，顺带把指纹补全；不能当成「齐了」直接丢下
+        val now = 1_800_000_000_000L
+        val day = 24L * 60 * 60 * 1000
+        assertTrue(
+            HealthCopyLedger.needsCopy(HealthCopyLedger.DayRecord(now - 5 * day, emptySet()), now),
+        )
+    }
+
+    @Test
+    fun `睡眠指纹能认出来，其它类型不算`() {
+        val withSleep = HealthCopyLedger.DayRecord(0, setOf("monitor:312#1", "sleep:173#1"))
+        val withoutSleep = HealthCopyLedger.DayRecord(0, setOf("monitor:312#1", "stress:60#1"))
+        assertTrue(withSleep.hasSleep())
+        assertFalse(withoutSleep.hasSleep())
+    }
+
+    @Test
+    fun `复查窗口覆盖手表延迟同步的那几天`() {
+        val day = 24L * 60 * 60 * 1000
+        assertTrue(
+            "至少要覆盖今天和昨天，否则隔夜补传的睡眠会漏掉",
+            HealthCopyLedger.RECHECK_WINDOW_MS >= 2 * day,
+        )
+        assertTrue(
+            "再长就是白下载：数据早就在云端了",
+            HealthCopyLedger.RECHECK_WINDOW_MS <= 7 * day,
+        )
+        assertTrue(
+            "没睡眠的日期必须盯得比有睡眠的久",
+            HealthCopyLedger.SLEEP_WAIT_WINDOW_MS > HealthCopyLedger.RECHECK_WINDOW_MS,
+        )
+        assertTrue(
+            "一周才同步一次手表的情况也要接住",
+            HealthCopyLedger.SLEEP_WAIT_WINDOW_MS >= 7 * day,
+        )
+    }
+
+    // ==================== 手动补齐 ====================
+
+    @Test
+    fun `作废最近三天只删这三天，更早的断点不动`() {
+        val ledger = HealthCopyLedger(context)
+        val today = LocalDate.of(2026, 11, 2)
+        listOf("2026-10-25", "2026-10-30", "2026-10-31", "2026-11-01", "2026-11-02")
+            .forEach { ledger.markFiles(1L, 2L, it, setOf("monitor:400#1")) }
+
+        ledger.forgetRecent(1L, 2L, days = 3, today = today)
+
+        // 最近三天 = 10-31、11-01、11-02
+        assertEquals(
+            setOf("2026-10-25", "2026-10-30"),
+            ledger.copiedDates(1L, 2L),
+        )
+    }
+
+    @Test
+    fun `作废之后新实例也读不到那几天`() {
+        val ledger = HealthCopyLedger(context)
+        val today = LocalDate.of(2026, 11, 2)
+        ledger.markFiles(1L, 2L, "2026-11-02", setOf("monitor:400#1"))
+        ledger.forgetRecent(1L, 2L, days = 3, today = today)
+
+        // 不落盘的话，进程一重启这几天又「已经搬过」了
+        val restarted = HealthCopyLedger(context)
+        assertTrue(restarted.copiedDates(1L, 2L).isEmpty())
+        assertNull(restarted.dayRecord(1L, 2L, "2026-11-02"))
+    }
+
+    @Test
+    fun `没有记录时作废是空操作`() {
+        val ledger = HealthCopyLedger(context)
+        ledger.forgetRecent(1L, 2L, days = 3, today = LocalDate.of(2026, 11, 2))
+        assertTrue(ledger.copiedDates(1L, 2L).isEmpty())
+    }
 }
