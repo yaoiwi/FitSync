@@ -179,7 +179,7 @@ fun LoginWizardScreen(
 
                     2 -> {
                         MiuixSectionTitle("选择区域")
-                        MiuixCard(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        MiuixCard {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 RegionSegmentedControl(
                                     selectedRegion = state.selectedRegion,
@@ -199,7 +199,7 @@ fun LoginWizardScreen(
 
                     3 -> {
                         MiuixSectionTitle("登录 Garmin")
-                        MiuixCard(modifier = Modifier.padding(horizontal = 16.dp)) {
+                        MiuixCard {
                             Column(modifier = Modifier.padding(16.dp)) {
                                 Text(
                                     text = "账号密码只输入在 Garmin 官方页面",

@@ -71,8 +71,16 @@ fun MiuixCard(
 ) {
     // 直接用官方 Card（HyperIsland 同款）：圆角、底色、按压反馈都由 Miuix 控制；
     // insideMargin 归零，因为我们的行内容自己带 18dp 内边距。
+    //
+    // 左右 12dp：卡片不能贴到屏幕边。16dp 圆角在边缘只露出半个弧，看着像被切掉了；
+    // 而且底部导航胶囊本身有 12dp 边距，卡片通栏时两者左右对不齐。
+    //
+    // 上下 5dp：相邻两张卡之间留出 10dp。以前今日卡和本周卡只隔 2px，
+    // 上下两个圆角在左右两端各咬出一个黑三角，就是"缝隙两边都有缺口"的来源。
     Card(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .padding(horizontal = 12.dp, vertical = 5.dp)
+            .fillMaxWidth(),
         cornerRadius = 16.dp,
         insideMargin = PaddingValues(0.dp),
         content = content,
@@ -229,7 +237,9 @@ fun MiuixSectionTitle(text: String, modifier: Modifier = Modifier) {
         fontSize = 13.sp,
         fontWeight = FontWeight.Medium,
         color = MiuixSummary,
-        modifier = modifier.padding(start = 18.dp, top = 20.dp, bottom = 8.dp),
+        // 30 = 卡片左右外边距 12 + 卡片内边距 18：标题和卡片正文左边缘对齐，
+        // 不然卡片一缩进，标题就比正文多凸出 12dp
+        modifier = modifier.padding(start = 30.dp, top = 20.dp, bottom = 8.dp),
     )
 }
 
