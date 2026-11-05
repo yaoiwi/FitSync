@@ -1,6 +1,7 @@
 package com.fitsync.data.settings
 
 import android.content.Context
+import com.fitsync.data.sync.ActivityPaging
 
 /**
  * 同步策略的持久化。
@@ -23,6 +24,9 @@ object SyncSettings {
 
     /** 「回填历史」默认补多少天 */
     const val KEY_BACKFILL_DAYS = "backfill_days"
+
+    /** 「同步活动」一次拉多少条 */
+    const val KEY_ACTIVITY_LIMIT = "sync_activity_limit"
 
     /** 「搬运健康数据」默认搬多少天 */
     const val KEY_COPY_HEALTH_DAYS = "copy_health_days"
@@ -61,6 +65,16 @@ object SyncSettings {
 
     fun setBackfillDays(context: Context, days: Int) {
         prefs(context).edit().putInt(KEY_BACKFILL_DAYS, days).apply()
+    }
+
+    /** 一次「同步活动」拉多少条；越界值读出来时收敛，避免旧数据或手改配置把请求数撑爆 */
+    fun activityLimit(context: Context): Int =
+        ActivityPaging.normalize(prefs(context).getInt(KEY_ACTIVITY_LIMIT, ActivityPaging.DEFAULT_LIMIT))
+
+    fun setActivityLimit(context: Context, limit: Int) {
+        prefs(context).edit()
+            .putInt(KEY_ACTIVITY_LIMIT, ActivityPaging.normalize(limit))
+            .apply()
     }
 
     fun copyHealthDays(context: Context): Int =

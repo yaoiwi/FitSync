@@ -99,6 +99,7 @@ fun HomeScreen(
     val syncIntervalHours by viewModel.syncIntervalHours.collectAsState()
     val wifiOnly by viewModel.wifiOnly.collectAsState()
     val backfillDays by viewModel.backfillDays.collectAsState()
+    val activityLimit by viewModel.activityLimit.collectAsState()
     val importLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -229,17 +230,7 @@ fun HomeScreen(
                                 onCopyHealth = onOpenCopyHealth,
                                 onExport = onOpenExport,
                                 onOpenAccount = onOpenAccounts,
-                            )
-                            else -> SettingsTab(
-                                accountCount = accounts.size,
                                 message = syncState.message,
-                                themeMode = themeMode,
-                                onThemeModeChange = { ThemeModePref.set(context, it) },
-                                floatingNavBar = floatingNavBar,
-                                onFloatingNavBarChange = { FloatingNavBarPref.set(context, it) },
-                                onOpenAccounts = onOpenAccounts,
-                                onOpenChangelog = onOpenChangelog,
-                                onOpenAcknowledgements = onOpenAcknowledgements,
                                 onOpenSyncLogs = onOpenSyncLogs,
                                 onBackfill = viewModel::backfillHistory,
                                 autoSyncOnOpen = autoSyncOnOpen,
@@ -253,6 +244,18 @@ fun HomeScreen(
                                 rateLimitRemainingMs = viewModel::rateLimitRemainingMs,
                                 rateLimitStrikes = viewModel::rateLimitStrikes,
                                 onRetryAfterRateLimit = viewModel::retryAfterRateLimit,
+                                onSyncHealth = viewModel::syncHealthNow,
+                                onSyncActivities = viewModel::syncActivitiesNow,
+                                activityLimit = activityLimit,
+                                onActivityLimitChange = viewModel::setActivityLimit,
+                            )
+                            else -> SettingsTab(
+                                themeMode = themeMode,
+                                onThemeModeChange = { ThemeModePref.set(context, it) },
+                                floatingNavBar = floatingNavBar,
+                                onFloatingNavBarChange = { FloatingNavBarPref.set(context, it) },
+                                onOpenChangelog = onOpenChangelog,
+                                onOpenAcknowledgements = onOpenAcknowledgements,
                                 onBackupDatabase = { uri ->
                                     Toast.makeText(context, "正在备份…", Toast.LENGTH_SHORT).show()
                                     scope.launch {

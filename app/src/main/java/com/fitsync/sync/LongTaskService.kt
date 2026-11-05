@@ -204,7 +204,7 @@ class LongTaskService : Service() {
             "长任务进度",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
-            description = "搬运健康数据、回填历史这类长任务的进度与停止按钮"
+            description = "搬运健康数据、补齐历史记录这类长任务的进度与停止按钮"
             setShowBadge(false)
             enableVibration(false)
             setSound(null, null)

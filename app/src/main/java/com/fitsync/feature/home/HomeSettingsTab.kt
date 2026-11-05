@@ -3,62 +3,33 @@ package com.fitsync.feature.home
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.background
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.fitsync.BuildConfig
-import com.fitsync.copyToClipboard
-import com.fitsync.data.network.GarminDiagnostics
-import com.fitsync.permission.BatteryOptimization
-import com.fitsync.permission.rememberNotificationPermissionGate
 import com.fitsync.ui.components.HapticFeedback
 import com.fitsync.ui.components.Haptics
 import com.fitsync.ui.components.HyperPage
 import com.fitsync.ui.components.MiuixCard
 import com.fitsync.ui.components.MiuixDivider
-import com.fitsync.ui.components.MiuixActionDialog
-import com.fitsync.ui.components.MiuixConfirmDialog
 import com.fitsync.ui.components.MiuixRow
 import com.fitsync.ui.components.MiuixSectionTitle
 import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.theme.MiuiText1
-import com.fitsync.ui.theme.MiuixError
-import com.fitsync.ui.theme.MiuixGroupBg
-import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
 import com.fitsync.ui.components.MiuixSegmentedControl
 import com.fitsync.ui.theme.ThemeModePref
@@ -88,28 +59,12 @@ private fun cooldownLabel(ms: Long): String {
 
 @Composable
 internal fun SettingsTab(
-    accountCount: Int,
-    message: String?,
     themeMode: String = ThemeModePref.FOLLOW,
     onThemeModeChange: (String) -> Unit = {},
     floatingNavBar: Boolean = true,
     onFloatingNavBarChange: (Boolean) -> Unit = {},
-    onOpenAccounts: () -> Unit = {},
     onOpenChangelog: () -> Unit = {},
     onOpenAcknowledgements: () -> Unit = {},
-    onOpenSyncLogs: () -> Unit = {},
-    onBackfill: () -> Unit = {},
-    autoSyncOnOpen: Boolean = true,
-    onAutoSyncChange: (Boolean) -> Unit = {},
-    syncIntervalHours: Long = 6L,
-    onSyncIntervalChange: (Long) -> Unit = {},
-    wifiOnly: Boolean = false,
-    onWifiOnlyChange: (Boolean) -> Unit = {},
-    backfillDays: Int = 365,
-    onBackfillDaysChange: (Int) -> Unit = {},
-    rateLimitRemainingMs: () -> Long = { 0L },
-    rateLimitStrikes: () -> Int = { 0 },
-    onRetryAfterRateLimit: () -> Unit = {},
     onBackupDatabase: (android.net.Uri) -> Unit = {},
     onRestoreDatabase: (android.net.Uri) -> Unit = {},
 ) {
@@ -117,48 +72,6 @@ internal fun SettingsTab(
     val themeCodes = listOf(ThemeModePref.FOLLOW, ThemeModePref.LIGHT, ThemeModePref.DARK)
     val settingsContext = LocalContext.current
     var hapticsOn by remember { mutableStateOf(Haptics.isEnabled(settingsContext)) }
-    val intervalValues = listOf(6L, 12L, 24L, 0L)
-    val intervalIndex = intervalValues.indexOf(syncIntervalHours).let { if (it < 0) 0 else it }
-    val backfillValues = listOf(30, 90, 365)
-    val backfillIndex = backfillValues.indexOf(backfillDays).let { if (it < 0) 2 else it }
-    // 回填同样是长任务：先要通知权限，再交给前台服务跑
-    val ensureNotification = rememberNotificationPermissionGate()
-    // 电池优化白名单：跳系统设置回来要重新读一次，否则开关状态是旧的
-    var batteryExempt by remember {
-        mutableStateOf(BatteryOptimization.isIgnoring(settingsContext))
-    }
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                batteryExempt = BatteryOptimization.isIgnoring(settingsContext)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // 冷却倒计时：每秒刷新一次，值没变时 Compose 不会重组，开销可以忽略
-    var cooldownMs by remember { mutableStateOf(0L) }
-    var strikes by remember { mutableStateOf(0) }
-    var showRetryConfirm by remember { mutableStateOf(false) }
-    // 最近一次失败的请求快照：403 光看状态码分不清是「没带令牌」还是「网络被拦」，
-    // 这里把证据摆在设置页，用户能直接复制发出来
-    var lastFailure by remember { mutableStateOf<GarminDiagnostics.Entry?>(null) }
-    // 409「目标账号已有」不是失败：没有真失败时用它当摘要，
-    // 否则搬完一次、12 个文件全 409，这里会写着「最近一次失败」吓人
-    var dupNote by remember { mutableStateOf<String?>(null) }
-    var showDiagnostics by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            cooldownMs = rateLimitRemainingMs()
-            strikes = rateLimitStrikes()
-            lastFailure = GarminDiagnostics.latest()
-            dupNote = GarminDiagnostics.expectedNote()
-            delay(1_000L)
-        }
-    }
-
     val backupLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/octet-stream"),
     ) { uri -> uri?.let(onBackupDatabase) }
@@ -168,162 +81,8 @@ internal fun SettingsTab(
 
     HyperPage(
         title = "设置",
-        subtitle = "外观、同步策略与版本信息",
+        subtitle = "数据备份、外观与版本信息",
     ) {
-        item {
-            MiuixSectionTitle("同步")
-            MiuixCard {
-                if (cooldownMs > 0L) {
-                    Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "同步已暂停",
-                                fontSize = 16.sp,
-                                color = MiuixError,
-                                fontWeight = FontWeight.Medium,
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                text = if (strikes > 0) "Garmin 限流 · 连续第 $strikes 次" else "Garmin 限流",
-                                fontSize = 12.sp,
-                                color = MiuixSummary,
-                            )
-                        }
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "还有 ${cooldownLabel(cooldownMs)}。冷却期间不会发出任何请求，" +
-                                "手动点同步也不会联网——这是为了避免把账号推进 48 小时锁定。",
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = MiuixSummary,
-                        )
-                        TextButton(
-                            onClick = { showRetryConfirm = true },
-                            contentPadding = PaddingValues(0.dp),
-                        ) {
-                            Text(
-                                text = "已换网络 / 已过锁定时间，立即重试",
-                                fontSize = 13.sp,
-                                color = MiuixPrimary,
-                            )
-                        }
-                    }
-                    MiuixDivider()
-                }
-                MiuixRow(
-                    title = "同步诊断",
-                    summary = lastFailure?.let {
-                        "最近一次失败：HTTP ${it.code} · ${it.endpoint}" +
-                            if (it.tokenLength == 0) "（请求没带令牌）" else ""
-                    } ?: dupNote ?: "暂无失败记录",
-                    showArrow = true,
-                    onClick = { showDiagnostics = true },
-                )
-                MiuixDivider()
-                MiuixRow(
-                    title = "打开即同步",
-                    summary = "进入前台自动拉取，30 分钟内不重复",
-                    trailing = {
-                        MiuixSwitch(
-                            checked = autoSyncOnOpen,
-                            onCheckedChange = { enabled ->
-                                onAutoSyncChange(enabled)
-                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                            },
-                        )
-                    },
-                )
-                MiuixDivider()
-                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
-                    Text(text = "后台同步", fontSize = 16.sp, color = MiuiText1)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = "选「仅手动」就不再后台联网，只在你点同步时拉取",
-                        fontSize = 12.sp,
-                        lineHeight = 16.sp,
-                        color = MiuixSummary,
-                    )
-                    Spacer(Modifier.height(12.dp))
-                    MiuixSegmentedControl(
-                        options = listOf("6 小时", "12 小时", "24 小时", "仅手动"),
-                        selectedIndex = intervalIndex,
-                        onSelect = { index ->
-                            onSyncIntervalChange(intervalValues[index])
-                            Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                        },
-                    )
-                }
-                MiuixDivider()
-                MiuixRow(
-                    title = "仅 Wi-Fi 自动同步",
-                    summary = "移动网络下跳过自动同步，手动同步不受限",
-                    trailing = {
-                        MiuixSwitch(
-                            checked = wifiOnly,
-                            onCheckedChange = { enabled ->
-                                onWifiOnlyChange(enabled)
-                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                            },
-                        )
-                    },
-                )
-                MiuixDivider()
-                MiuixRow(
-                    title = "后台加速",
-                    summary = if (batteryExempt) {
-                        "已允许后台不受电池限制，长任务不会被降速"
-                    } else {
-                        "允许后搬运、回填在后台不会被系统降速或冻结"
-                    },
-                    showArrow = !batteryExempt,
-                    trailing = {
-                        if (batteryExempt) {
-                            Text(text = "已开启", fontSize = 12.sp, color = MiuixPrimary)
-                        }
-                    },
-                    onClick = if (batteryExempt) {
-                        null
-                    } else {
-                        ({ BatteryOptimization.requestIgnore(settingsContext) })
-                    },
-                )
-                MiuixDivider()
-                MiuixRow(
-                    title = "回填历史",
-                    summary = "拉取过去一年的日汇总、睡眠与全部活动（较慢）",
-                    showArrow = true,
-                    onClick = { ensureNotification(onBackfill) },
-                )
-                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-                    Text(text = "回填范围", fontSize = 12.sp, color = MiuixSummary)
-                    Spacer(Modifier.height(8.dp))
-                    MiuixSegmentedControl(
-                        options = listOf("30 天", "90 天", "1 年"),
-                        selectedIndex = backfillIndex,
-                        onSelect = { index ->
-                            onBackfillDaysChange(backfillValues[index])
-                            Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                        },
-                    )
-                }
-                MiuixDivider()
-                MiuixRow(
-                    title = "同步记录",
-                    summary = "每次同步的时间、条数与失败原因",
-                    showArrow = true,
-                    onClick = onOpenSyncLogs,
-                )
-                MiuixDivider()
-                MiuixRow(
-                    title = "已连接账号",
-                    summary = "点击查看详情与同步状态",
-                    trailing = { Text("$accountCount 个", fontSize = 14.sp, color = MiuixSummary) },
-                    showArrow = true,
-                    onClick = onOpenAccounts,
-                )
-            }
-        }
-
         item {
             MiuixSectionTitle("数据")
             MiuixCard {
@@ -455,73 +214,6 @@ internal fun SettingsTab(
             }
         }
 
-        if (message != null) {
-            item {
-                Text(
-                    text = message,
-                    fontSize = 12.sp,
-                    color = MiuixSummary,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 10.dp),
-                )
-            }
-        }
-    }
-
-    if (showRetryConfirm) {
-        // 与「搬运」「导入」共用同一套 Miuix 外壳：Material3 的弹窗过渡和按钮排布
-        // 跟 HyperOS 差得远，一弹出来就出戏
-        MiuixConfirmDialog(
-            title = "立即重试同步？",
-            message = "只有在换过网络（流量 / 另一个 Wi-Fi），或者已经过了上面提示的恢复时间后再点。\n\n" +
-                "如果账号仍在 Garmin 的锁定窗口里，这次重试会立刻再收到 429，冷却会从当前档位重新计时。",
-            confirmText = "仍然重试",
-            cancelText = "取消",
-            onConfirm = {
-                showRetryConfirm = false
-                onRetryAfterRateLimit()
-            },
-            onDismiss = { showRetryConfirm = false },
-        )
-    }
-
-    if (showDiagnostics) {
-        MiuixActionDialog(
-            title = "同步诊断",
-            confirmText = "复制",
-            cancelText = "关闭",
-            onConfirm = {
-                copyToClipboard(
-                    settingsContext,
-                    "FitSync 同步诊断",
-                    GarminDiagnostics.dump(),
-                )
-                showDiagnostics = false
-            },
-            onDismiss = { showDiagnostics = false },
-        ) {
-            // 诊断文本可能有几十行：放进浅色圆角块里限高滚动，
-            // 卡片不会顶到状态栏，也不会把「复制」按钮挤出去
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 380.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(MiuixGroupBg),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
-                ) {
-                    Text(
-                        text = GarminDiagnostics.dump(),
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        color = MiuixSummary,
-                    )
-                }
-            }
-        }
     }
 }
 

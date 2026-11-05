@@ -92,18 +92,28 @@ class GarminSyncEngine @Inject constructor(
      */
     private val syncMutex = Mutex()
 
-    suspend fun syncAccount(accountId: Long, backfillDays: Int = 7): SyncOutcome {
+    suspend fun syncAccount(
+        accountId: Long,
+        backfillDays: Int = 7,
+        scope: SyncScope = SyncScope.ALL,
+        activityLimit: Int = ActivityPaging.DEFAULT_LIMIT,
+    ): SyncOutcome {
         if (!syncMutex.tryLock()) {
             return SyncOutcome(false, 0, "已经在同步了，等这一轮结束再试", busy = true)
         }
         return try {
-            syncAccountLocked(accountId, backfillDays)
+            syncAccountLocked(accountId, backfillDays, scope, activityLimit)
         } finally {
             syncMutex.unlock()
         }
     }
 
-    private suspend fun syncAccountLocked(accountId: Long, backfillDays: Int): SyncOutcome =
+    private suspend fun syncAccountLocked(
+        accountId: Long,
+        backfillDays: Int,
+        scope: SyncScope = SyncScope.ALL,
+        activityLimit: Int = ActivityPaging.DEFAULT_LIMIT,
+    ): SyncOutcome =
         withContext(Dispatchers.IO) {
             val account = repository.getAccount(accountId)
                 ?: return@withContext SyncOutcome(false, 0, "账号不存在")
@@ -120,10 +130,16 @@ class GarminSyncEngine @Inject constructor(
 
             try {
                 val records = try {
-                    pullAll(account, ensureToken(credential), backfillDays)
+                    pullAll(account, ensureToken(credential), backfillDays, scope, activityLimit)
                 } catch (e: GarminNetworkException.Unauthorized) {
                     // 本地记录的过期时间不可信时（服务端提前作废），换一张再来一次
-                    pullAll(account, refreshOrThrow(credential).accessToken, backfillDays)
+                    pullAll(
+                        account,
+                        refreshOrThrow(credential).accessToken,
+                        backfillDays,
+                        scope,
+                        activityLimit,
+                    )
                 } catch (e: GarminNetworkException.Forbidden) {
                     // Garmin 在令牌失效时并不总是老实回 401，有时直接 403
                     // （请求被重定向到登录页、或令牌被提前吊销）。这时续期能救回来，
@@ -134,13 +150,11 @@ class GarminSyncEngine @Inject constructor(
                         // 续期本身也失败（OAuth1 被吊销），保留原始的 403 更有信息量
                         throw e
                     }
-                    pullAll(account, fresh.accessToken, backfillDays)
+                    pullAll(account, fresh.accessToken, backfillDays, scope, activityLimit)
                 }
 
-                val todayText = LocalDate.now().format(dateFormatter)
-                advanceCursor(accountId, "daily", todayText, startedAt)
-                advanceCursor(accountId, "sleep", todayText, startedAt)
-                advanceCursor(accountId, "activity", todayText, startedAt)
+                // 游标已经在 pullAll 里按 scope 分别推进：只同步活动时不该把
+                // daily / sleep 的游标也挪到今天，否则下次同步健康数据会跳过这几天。
                 repository.updateAccountStatus(accountId, AccountStatus.NORMAL.code, startedAt)
 
                 log(accountId, ok = true, records = records, durationMs = System.currentTimeMillis() - startedAt)
@@ -187,41 +201,95 @@ class GarminSyncEngine @Inject constructor(
         account: AccountEntity,
         token: String,
         backfillDays: Int,
+        scope: SyncScope,
+        activityLimit: Int,
     ): Int {
         val accountId = account.id
         var records = 0
 
-        // 昵称可能是空的或只剩 GUID，Garmin 的日汇总接口不认 GUID，会一直 404。
-        // 这里先换成真正能当路径用的标识（displayName 或数字 profileId）。
-        val pathUser = connectClient.resolvePathUser(account.regionEnum(), token, account.displayName)
-
         val today = LocalDate.now()
-        var day = resolveFromDate(accountId, today, backfillDays)
-        val firstDay = day
 
-        while (!day.isAfter(today)) {
-            // Garmin 的限流看的是「单位时间内的请求数」，一天两次请求连着发，
-            // 7 天就是 14 个请求在几秒内打出去，很容易直接 429。
-            // 这里按天留出间隔，代价只是同步慢几秒，换来不触发风控。
-            if (day != firstDay) delay(DAY_REQUEST_GAP_MS)
-            val date = day.format(dateFormatter)
-            if (saveSummary(accountId, account.regionEnum(), token, pathUser, date)) records++
-            if (saveSleep(accountId, account.regionEnum(), token, pathUser, date)) records++
-            day = day.plusDays(1)
+        // 健康数据与活动是两条独立的通道：只同步活动时，一个日汇总接口都不该发。
+        // 以前它们挤在一个 pullAll 里，用户想「补一下最近的跑步记录」也得顺带
+        // 把 7 天的日汇总+睡眠重拉一遍，14 个请求换 1 个请求的结果。
+        if (scope.health) {
+            // 昵称可能是空的或只剩 GUID，Garmin 的日汇总接口不认 GUID，会一直 404。
+            // 这里先换成真正能当路径用的标识（displayName 或数字 profileId）。
+            // 放在分支里：只同步活动时不需要这个标识，也就不该为它多打一个 profile 请求。
+            val pathUser =
+                connectClient.resolvePathUser(account.regionEnum(), token, account.displayName)
+
+            var day = resolveFromDate(accountId, today, backfillDays)
+            val firstDay = day
+
+            while (!day.isAfter(today)) {
+                // Garmin 的限流看的是「单位时间内的请求数」，一天两次请求连着发，
+                // 7 天就是 14 个请求在几秒内打出去，很容易直接 429。
+                // 这里按天留出间隔，代价只是同步慢几秒，换来不触发风控。
+                if (day != firstDay) delay(DAY_REQUEST_GAP_MS)
+                val date = day.format(dateFormatter)
+                if (saveSummary(accountId, account.regionEnum(), token, pathUser, date)) records++
+                if (saveSleep(accountId, account.regionEnum(), token, pathUser, date)) records++
+                day = day.plusDays(1)
+            }
+
+            val todayText = today.format(dateFormatter)
+            val healthDoneAt = System.currentTimeMillis()
+            advanceCursor(accountId, "daily", todayText, healthDoneAt)
+            advanceCursor(accountId, "sleep", todayText, healthDoneAt)
         }
 
-        connectClient.fetchActivities(account.regionEnum(), token, limit = 20).forEach { a ->
-            saveActivity(accountId, a)
-            records++
+        if (scope.activity) {
+            records += pullActivities(account, token, activityLimit)
+            advanceCursor(
+                accountId,
+                "activity",
+                today.format(dateFormatter),
+                System.currentTimeMillis(),
+            )
         }
 
-        val todayText = today.format(dateFormatter)
-        val doneAt = System.currentTimeMillis()
-        advanceCursor(accountId, "daily", todayText, doneAt)
-        advanceCursor(accountId, "sleep", todayText, doneAt)
-        advanceCursor(accountId, "activity", todayText, doneAt)
         return records
     }
+
+    /**
+     * 拉最近 [limit] 条活动。
+     *
+     * 接口单页上限按 20 条走（和原来一致），要更多就翻页。翻页比一次要 100 条稳：
+     * Garmin 对单次 limit 有过截断，而 `start` 偏移的分页一直是可用的。
+     *
+     * 每页之间留 [ACTIVITY_PAGE_GAP_MS]：一次 100 条 = 5 个请求，连着发容易撞限流。
+     */
+    private suspend fun pullActivities(
+        account: AccountEntity,
+        token: String,
+        limit: Int,
+    ): Int {
+        val target = ActivityPaging.normalize(limit)
+        val region = account.regionEnum()
+        var fetched = 0
+        var start = 0
+        while (fetched < target) {
+            if (start > 0) delay(ACTIVITY_PAGE_GAP_MS)
+            // 最后一页只要剩下的条数：50 条 = 20 + 20 + 10，正好 50，
+            // 不会因为「一页固定 20」而多写 10 条进来
+            val pageSize = minOf(ActivityPaging.PAGE_SIZE, target - fetched)
+            val page = connectClient.fetchActivities(
+                region = region,
+                accessToken = token,
+                limit = pageSize,
+                start = start,
+            )
+            if (page.isEmpty()) break
+            page.forEach { saveActivity(account.id, it) }
+            fetched += page.size
+            // 返回不满一页说明已经到底了，再翻也是空
+            if (page.size < pageSize) break
+            start += page.size
+        }
+        return fetched
+    }
+
 
     // ============================ 落库（同步与回填共用） ============================
 
@@ -350,7 +418,7 @@ class GarminSyncEngine @Inject constructor(
         val account = repository.getAccount(accountId)
             ?: return@withContext SyncOutcome(false, 0, "账号不存在")
         if (account.sourceType != SourceType.GARMIN.code) {
-            return@withContext SyncOutcome(false, 0, "本地导入账号无需回填")
+            return@withContext SyncOutcome(false, 0, "本地导入账号无需补齐历史")
         }
         val credential = credentialStore.load(
             SourceType.GARMIN.code,
@@ -454,10 +522,10 @@ class GarminSyncEngine @Inject constructor(
                 true,
                 records,
                 buildString {
-                    append("回填完成，共 $records 条记录")
+                    append("补齐完成，共下载 $records 条记录")
                     if (remainingShards > 0) {
-                        append("；还有 $remainingShards 个月未补，")
-                        append("等几分钟再点一次「回填历史」会从断点继续")
+                        append("；还有 $remainingShards 个月没补完，")
+                        append("过几分钟再点一次「补齐历史记录」会接着补")
                     }
                 },
             )
@@ -487,10 +555,12 @@ class GarminSyncEngine @Inject constructor(
     suspend fun syncAll(
         backfillDays: Int = 7,
         primaryFirstId: Long? = null,
+        scope: SyncScope = SyncScope.ALL,
+        activityLimit: Int = ActivityPaging.DEFAULT_LIMIT,
     ): SyncBatch {
         if (!syncMutex.tryLock()) return SyncBatch(busy = true, results = emptyList())
         return try {
-            SyncBatch(busy = false, results = syncAllLocked(backfillDays, primaryFirstId))
+            SyncBatch(busy = false, results = syncAllLocked(backfillDays, primaryFirstId, scope, activityLimit))
         } finally {
             syncMutex.unlock()
         }
@@ -499,6 +569,8 @@ class GarminSyncEngine @Inject constructor(
     private suspend fun syncAllLocked(
         backfillDays: Int,
         primaryFirstId: Long?,
+        scope: SyncScope,
+        activityLimit: Int,
     ): List<Pair<Long, SyncOutcome>> {
         val accounts = repository.observeEnabledAccounts().first()
             // 本地导入（SourceType.FILE）没有远端数据，不参与同步
@@ -509,7 +581,7 @@ class GarminSyncEngine @Inject constructor(
         accounts.forEachIndexed { index, account ->
             if (index > 0) delay(ACCOUNT_GAP_MS)
             // 已经在 syncAll 的锁里，直接走不加锁的版本，否则自己会把自己拦住
-            val outcome = syncAccountLocked(account.id, backfillDays)
+            val outcome = syncAccountLocked(account.id, backfillDays, scope, activityLimit)
             results += account.id to outcome
             // 一个账号被限流，另一个账号此刻发请求也只会再被拒一次，
             // 而且会让冷却窗口继续延长——直接收手
@@ -626,5 +698,59 @@ class GarminSyncEngine @Inject constructor(
 
         /** 两个账号之间的间隔：换账号时多留一点，避免被当成连续突发 */
         const val ACCOUNT_GAP_MS = 1_200L
+
+        /** 活动翻页之间的间隔：一次 100 条 = 5 个请求，连着发容易撞限流 */
+        const val ACTIVITY_PAGE_GAP_MS = 400L
+    }
+}
+
+/**
+ * 这一轮同步拉哪一类数据。
+ *
+ * 健康和活动在 Garmin 是两个完全不同的接口族：健康按「天」逐日拉日汇总和睡眠，
+ * 活动按「条」翻页拉列表。以前它们绑在一次同步里，结果是想补两条跑步记录，
+ * 也得顺带重拉 7 天的日汇总——14 个请求换 1 个请求的结果，还白白多占限流额度。
+ *
+ * 拆开之后两边各自推进自己的游标：只同步活动不会把 `daily` / `sleep` 的游标
+ * 挪到今天，否则下次同步健康数据会以为这几天已经拉过而跳过。
+ */
+enum class SyncScope(val health: Boolean, val activity: Boolean) {
+    /** 日汇总、睡眠、心率：按天增量 */
+    HEALTH(health = true, activity = false),
+
+    /** 运动活动列表：按条翻页 */
+    ACTIVITY(health = false, activity = true),
+
+    /** 顶部「同步」按钮和后台定时任务用这个 */
+    ALL(health = true, activity = true),
+}
+
+/**
+ * 活动条数的分页换算。
+ *
+ * 单独抽出来是为了能单测：拉 100 条要发几个请求、用户填了离谱的值怎么收敛，
+ * 这些不该埋在一个需要 mock 网络的私有方法里。
+ */
+object ActivityPaging {
+    /** 接口单页条数：和原来的固定值一致，Garmin 对更大的 limit 会截断 */
+    const val PAGE_SIZE = 20
+
+    /** 单次同步最多拉这么多条，再多就是变相回填了，应该走「回填历史」 */
+    const val MAX_LIMIT = 200
+
+    /** 默认 20 条：一次请求，最省配额 */
+    const val DEFAULT_LIMIT = 20
+
+    /** 界面上可选的档位 */
+    val OPTIONS = listOf(20, 50, 100)
+
+    /** 把任意输入收敛到 [PAGE_SIZE]..[MAX_LIMIT]；非法值退回默认 */
+    fun normalize(limit: Int): Int =
+        if (limit <= 0) DEFAULT_LIMIT else limit.coerceIn(PAGE_SIZE, MAX_LIMIT)
+
+    /** 拉 [limit] 条需要几页（向上取整） */
+    fun pages(limit: Int): Int {
+        val target = normalize(limit)
+        return (target + PAGE_SIZE - 1) / PAGE_SIZE
     }
 }

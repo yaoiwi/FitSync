@@ -233,6 +233,210 @@ class GarminSyncEngineTest {
         server.shutdown()
     }
 
+    // ============================ 健康 / 活动分开同步 ============================
+
+    /**
+     * 只同步健康数据时，活动接口一个请求都不该发。
+     *
+     * 用 requestCount 而不是只看落库结果：多发的请求同样要占 Garmin 的限流额度，
+     * 「结果对但请求多」在这个项目里就是 bug。
+     */
+    @Test
+    fun `只同步健康时不发活动请求`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        val base = server.url("/").toString().trimEnd('/')
+
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"calendarDate":"2026-11-04","totalSteps":8000,"totalDistanceMeters":6000.0,
+                   "floorsClimbed":5,"activeKilocalories":400.0,"restingKilocalories":1500.0,
+                   "restingHeartRate":51}"""
+            )
+        )
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"dailySleepDTO":{"calendarDate":"2026-11-04","sleepTimeSeconds":25200,
+                   "awakeSleepSeconds":600,"sleepStartTimestampGMT":1760700000000,
+                   "sleepEndTimestampGMT":1760730000000}}"""
+            )
+        )
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, FitSyncDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repository = FitDataRepositoryImpl(db)
+        val accountId = repository.upsertAccount(
+            AccountEntity(
+                sourceType = SourceType.GARMIN.code,
+                region = "cn",
+                externalUserId = "runner42",
+                displayName = "runner42",
+            )
+        )
+        val store = FakeCredentialStore(
+            StorableCredential(externalUserId = "runner42", accessToken = "AT")
+        )
+        val http = OkHttpClient()
+        val engine = GarminSyncEngine(
+            repository,
+            GarminConnectClient(http).apply {
+                endpoints = { GarminEndpoints("$base/sso", "$base/api", "$base/web") }
+            },
+            store,
+            GarminSsoClient(store, http, MemoryCookieJar()),
+        )
+
+        val outcome = engine.syncAccount(
+            accountId,
+            backfillDays = 1,
+            scope = SyncScope.HEALTH,
+        )
+
+        assertTrue("同步应成功：${outcome.message}", outcome.ok)
+        assertEquals(2, outcome.records)
+        assertEquals("日汇总 + 睡眠两个请求，活动一个都不发", 2, server.requestCount)
+        assertEquals(1, repository.observeDailySummaries(accountId).first().size)
+        assertEquals(0, repository.observeActivities(accountId).first().size)
+        assertNotNull("健康游标要推进", repository.getSyncCursor(accountId, "daily"))
+        assertEquals(
+            "只同步健康时不该碰活动游标",
+            null,
+            repository.getSyncCursor(accountId, "activity"),
+        )
+
+        db.close()
+        server.shutdown()
+    }
+
+    /**
+     * 只同步活动时：不发日汇总/睡眠，也不能把健康游标挪到今天。
+     *
+     * 游标是这条用例真正的重点。如果只拉活动却顺手推进了 `daily`，
+     * 下次同步健康数据会以为这几天都拉过了，那几天的睡眠就永远补不上——
+     * 和之前「一天只记一次账」踩过的是同一个坑。
+     */
+    @Test
+    fun `只同步活动时不发健康请求_也不推进健康游标`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        val base = server.url("/").toString().trimEnd('/')
+        server.enqueue(MockResponse().setResponseCode(200).setBody(activitiesJson(20)))
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, FitSyncDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repository = FitDataRepositoryImpl(db)
+        val accountId = repository.upsertAccount(
+            AccountEntity(
+                sourceType = SourceType.GARMIN.code,
+                region = "cn",
+                externalUserId = "runner42",
+                displayName = "runner42",
+            )
+        )
+        val store = FakeCredentialStore(
+            StorableCredential(externalUserId = "runner42", accessToken = "AT")
+        )
+        val http = OkHttpClient()
+        val engine = GarminSyncEngine(
+            repository,
+            GarminConnectClient(http).apply {
+                endpoints = { GarminEndpoints("$base/sso", "$base/api", "$base/web") }
+            },
+            store,
+            GarminSsoClient(store, http, MemoryCookieJar()),
+        )
+
+        val outcome = engine.syncAccount(
+            accountId,
+            backfillDays = 7,
+            scope = SyncScope.ACTIVITY,
+            activityLimit = 20,
+        )
+
+        assertTrue("同步应成功：${outcome.message}", outcome.ok)
+        assertEquals(20, outcome.records)
+        assertEquals("只有活动一个请求", 1, server.requestCount)
+        assertEquals(20, repository.observeActivities(accountId).first().size)
+        assertEquals(0, repository.observeDailySummaries(accountId).first().size)
+        assertEquals(
+            "只同步活动时绝不能推进健康游标，否则下次会跳过这几天",
+            null,
+            repository.getSyncCursor(accountId, "daily"),
+        )
+        assertNotNull(repository.getSyncCursor(accountId, "activity"))
+
+        db.close()
+        server.shutdown()
+    }
+
+    /** 按条翻页：50 条 = 20 + 20 + 10，三个请求，一条不多一条不少 */
+    @Test
+    fun `活动按条翻页_50条发3个请求`() = runBlocking {
+        val server = MockWebServer().apply { start() }
+        val base = server.url("/").toString().trimEnd('/')
+        server.enqueue(MockResponse().setResponseCode(200).setBody(activitiesJson(20, startId = 0)))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(activitiesJson(20, startId = 20)))
+        server.enqueue(MockResponse().setResponseCode(200).setBody(activitiesJson(10, startId = 40)))
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, FitSyncDatabase::class.java)
+            .allowMainThreadQueries()
+            .build()
+        val repository = FitDataRepositoryImpl(db)
+        val accountId = repository.upsertAccount(
+            AccountEntity(
+                sourceType = SourceType.GARMIN.code,
+                region = "cn",
+                externalUserId = "runner42",
+                displayName = "runner42",
+            )
+        )
+        val store = FakeCredentialStore(
+            StorableCredential(externalUserId = "runner42", accessToken = "AT")
+        )
+        val http = OkHttpClient()
+        val engine = GarminSyncEngine(
+            repository,
+            GarminConnectClient(http).apply {
+                endpoints = { GarminEndpoints("$base/sso", "$base/api", "$base/web") }
+            },
+            store,
+            GarminSsoClient(store, http, MemoryCookieJar()),
+        )
+
+        val outcome = engine.syncAccount(
+            accountId,
+            scope = SyncScope.ACTIVITY,
+            activityLimit = 50,
+        )
+
+        assertTrue("同步应成功：${outcome.message}", outcome.ok)
+        assertEquals(50, outcome.records)
+        assertEquals(50, repository.observeActivities(accountId).first().size)
+        assertEquals(3, server.requestCount)
+
+        // 最后一页只要 10 条：接口支持 limit 小于 20，不该为了凑整页多写 10 条
+        server.takeRequest()
+        server.takeRequest()
+        val last = server.takeRequest().requestUrl!!
+        assertEquals("40", last.queryParameter("start"))
+        assertEquals("10", last.queryParameter("limit"))
+
+        db.close()
+        server.shutdown()
+    }
+
+    /** 生成 [count] 条活动，externalId 连续，避免互相覆盖 */
+    private fun activitiesJson(count: Int, startId: Int = 0): String =
+        (0 until count).joinToString(separator = ",", prefix = "[", postfix = "]") { i ->
+            """{"activityId":${startId + i},"activityName":"Run $i",
+               "activityType":{"typeKey":"running"},"startTimeGMT":"2026-11-01 01:00:00",
+               "duration":1800,"distance":5000,"averageHR":150,"maxHR":175,
+               "calories":300,"elevationGain":30}"""
+        }
+
     private class FakeCredentialStore(private val credential: StorableCredential) : CredentialStore {
         var saved: StorableCredential? = null
 

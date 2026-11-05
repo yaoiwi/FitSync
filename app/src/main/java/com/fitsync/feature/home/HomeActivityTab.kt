@@ -108,7 +108,7 @@ internal fun ActivityTab(
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            text = "只拉最近 20 条；想要更早的记录，去设置里点「回填历史」。",
+                            text = "只拉最近 20 条；想看更早的记录，去「账号」页点「补齐历史记录」。",
                             fontSize = 12.5.sp,
                             color = MiuixSummary,
                             lineHeight = 18.sp,

@@ -16,7 +16,9 @@ import com.fitsync.data.settings.PrimaryAccountStore
 import com.fitsync.data.settings.RateLimitGate
 import com.fitsync.data.settings.SyncSettings
 import com.fitsync.data.sync.ActivityCopyService
+import com.fitsync.data.sync.ActivityPaging
 import com.fitsync.data.sync.GarminSyncEngine
+import com.fitsync.data.sync.SyncScope
 import com.fitsync.ui.components.accountTitle
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
@@ -168,6 +170,16 @@ class SyncCoordinator @Inject constructor(
         SyncScheduler.schedulePeriodic(context)
     }
 
+    /** 一次「同步活动」拉多少条 */
+    private val _activityLimit = MutableStateFlow(SyncSettings.activityLimit(context))
+    val activityLimit: StateFlow<Int> = _activityLimit.asStateFlow()
+
+    fun setActivityLimit(limit: Int) {
+        val normalized = ActivityPaging.normalize(limit)
+        _activityLimit.value = normalized
+        SyncSettings.setActivityLimit(context, normalized)
+    }
+
     /** 回填默认天数 */
     private val _backfillDays = MutableStateFlow(SyncSettings.backfillDays(context))
     val backfillDays: StateFlow<Int> = _backfillDays.asStateFlow()
@@ -213,13 +225,23 @@ class SyncCoordinator @Inject constructor(
             ) {
                 return@launch
             }
-            runSync(manual = false)
+            runSync(manual = false, scope = SyncScope.ALL)
         }
     }
 
-    /** 用户点「同步」 */
+    /** 用户点「同步」：健康数据 + 运动活动一起拉 */
     fun syncNow() {
-        scope.launch { runSync(manual = true) }
+        scope.launch { runSync(manual = true, scope = SyncScope.ALL) }
+    }
+
+    /** 只同步健康数据（日汇总、睡眠、心率） */
+    fun syncHealthNow() {
+        scope.launch { runSync(manual = true, scope = SyncScope.HEALTH) }
+    }
+
+    /** 只同步运动活动（按设置的条数翻页） */
+    fun syncActivitiesNow() {
+        scope.launch { runSync(manual = true, scope = SyncScope.ACTIVITY) }
     }
 
     /** 设置页展示用：冷却剩余毫秒，0 表示当前可以请求 */
@@ -242,11 +264,12 @@ class SyncCoordinator @Inject constructor(
         scope.launch {
             rateLimitGate.clear()
             _state.value = UiState(syncing = false, message = "已清除本地冷却，正在重试…")
-            runSync(manual = true)
+            // 「立即重试」是兜底动作，按全部同步来：用户点它是想恢复正常，不是只想拉一类
+            runSync(manual = true, scope = SyncScope.ALL)
         }
     }
 
-    private suspend fun runSync(manual: Boolean) {
+    private suspend fun runSync(manual: Boolean, scope: SyncScope) {
         if (_state.value.syncing) return
         // 手动同步不受限制；自动同步在「仅 Wi-Fi」开启且当前是移动网络时直接跳过
         if (!manual && SyncSettings.wifiOnly(context) && !isOnWifi()) {
@@ -273,7 +296,14 @@ class SyncCoordinator @Inject constructor(
         )
 
         val batch = runCatching {
-            syncEngine.syncAll(primaryFirstId = primaryAccountStore.primaryAccountId.value)
+            syncEngine.syncAll(
+                primaryFirstId = primaryAccountStore.primaryAccountId.value,
+                scope = scope,
+                // 只有用户主动点的那一刻才用他选的条数。自动同步（打开 App、后台定时）
+                // 固定一页 20 条：那几次是「顺手更新」，不该在用户没看着的时候
+                // 把请求量放大 5 倍。
+                activityLimit = if (manual) _activityLimit.value else ActivityPaging.DEFAULT_LIMIT,
+            )
         }.getOrElse { error ->
             _state.value = UiState(
                 syncing = false,
@@ -321,7 +351,7 @@ class SyncCoordinator @Inject constructor(
             failed.isNotEmpty() ->
                 "同步失败（${failed.size} 个账号）：${failed.first().second.message}"
             results.isEmpty() -> if (manual) "还没有可同步的账号" else null
-            else -> if (manual) "已同步 $records 条记录" else null
+            else -> if (manual) syncDoneLabel(scope, records) else null
         }
 
         if (limited == null && failed.isEmpty() && results.isNotEmpty()) {
@@ -333,7 +363,19 @@ class SyncCoordinator @Inject constructor(
     }
 
     /**
-     * 用户点「回填历史」。
+     * 三种同步的完成文案。
+     *
+     * 分开写是为了让用户一眼看出这次到底拉了哪一类：「已同步 20 条」在只拉活动时
+     * 会让人以为健康数据也更新了，而实际上一条日汇总都没请求。
+     */
+    private fun syncDoneLabel(scope: SyncScope, records: Int): String = when (scope) {
+        SyncScope.HEALTH -> "已同步健康数据 $records 条"
+        SyncScope.ACTIVITY -> "已同步活动 $records 条"
+        SyncScope.ALL -> "已同步 $records 条记录"
+    }
+
+    /**
+     * 用户点「补齐历史记录」。
      *
      * 这是慢任务（一年约 730 次请求），只在用户主动触发时跑；
      * 进度直接写进 [UiState.message]，首页/设置页都能看到。
@@ -347,24 +389,24 @@ class SyncCoordinator @Inject constructor(
             if (_state.value.syncing) return@launchLongTask
             if (rateLimitGate.isBlocked()) {
                 _state.value = UiState(
-                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，现在回填只会一直撞 429",
+                    message = "Garmin 限流冷却中：还有 ${rateLimitGate.waitLabel()}，现在补也只会一直撞 429",
                 )
                 return@launchLongTask
             }
             val accounts = repository.observeEnabledAccounts().first()
                 .filter { it.sourceType == SourceType.GARMIN.code }
             if (accounts.isEmpty()) {
-                _state.value = UiState(syncing = false, message = "还没有可回填的 Garmin 账号")
+                _state.value = UiState(syncing = false, message = "还没有可补齐历史的 Garmin 账号")
                 return@launchLongTask
             }
 
-            // 回填一年 ≈ 半小时，必须先进前台：否则锁屏几分钟后网络就被 Doze 掐了
-            startLongTaskService("回填历史", "准备中…")
+            // 补一年 ≈ 半小时，必须先进前台：否则锁屏几分钟后网络就被 Doze 掐了
+            startLongTaskService("补齐历史记录", "准备中…")
             var total = 0
             var failed = 0
             var limited: GarminSyncEngine.SyncOutcome? = null
             try {
-                _state.value = UiState(syncing = true, message = "正在回填历史…")
+                _state.value = UiState(syncing = true, message = "正在补齐历史记录…")
                 for (account in accounts) {
                     // 前台服务保住进程和网络，CPU 还要靠 WakeLock——锁屏后没有 CPU，
                     // delay 到点也不会恢复执行，进度会停在某一格
@@ -372,7 +414,7 @@ class SyncCoordinator @Inject constructor(
                         syncEngine.backfillHistory(account.id, days) { done, all, label ->
                             val text = "${labelOf(account)}：$label（$done/$all 天）"
                             _state.value = UiState(syncing = true, message = text)
-                            updateLongTaskService("回填历史", text, done, all)
+                            updateLongTaskService("补齐历史记录", text, done, all)
                         }
                     }
                     if (result.ok) total += result.records else failed++
@@ -386,24 +428,24 @@ class SyncCoordinator @Inject constructor(
                 }
                 val summary = when {
                     limited != null ->
-                        "回填被 Garmin 限流：已停止，还有 ${rateLimitGate.waitLabel()}。" +
-                            "已写入 $total 条，到点后可以接着回填"
-                    failed > 0 -> "回填结束：$failed 个账号失败，成功写入 $total 条"
-                    else -> "回填完成，共 $total 条记录"
+                        "补齐历史被 Garmin 限流：已停止，还有 ${rateLimitGate.waitLabel()}。" +
+                            "已下载 $total 条，到点后可以接着补"
+                    failed > 0 -> "补齐结束：$failed 个账号失败，成功下载 $total 条"
+                    else -> "补齐完成，共下载 $total 条记录"
                 }
                 _state.value = UiState(syncing = false, message = summary)
                 finishLongTaskService(
-                    title = if (limited == null && failed == 0) "回填完成" else "回填中断",
+                    title = if (limited == null && failed == 0) "补齐完成" else "补齐中断",
                     text = summary,
                 )
             } catch (e: CancellationException) {
                 // 用户点了通知栏的「停止」：已写入的不会回滚，再点一次从断点继续
-                finishLongTaskService("回填已停止", "已写入 $total 条，再点一次会接着回填")
+                finishLongTaskService("补齐已停止", "已下载 $total 条，再点一次会接着补")
                 throw e
             } catch (e: Exception) {
-                val text = "回填失败：${e.message ?: e.javaClass.simpleName}"
+                val text = "补齐历史失败：${e.message ?: e.javaClass.simpleName}"
                 _state.value = UiState(syncing = false, message = text)
-                finishLongTaskService("回填失败", text)
+                finishLongTaskService("补齐历史失败", text)
             }
         }
     }

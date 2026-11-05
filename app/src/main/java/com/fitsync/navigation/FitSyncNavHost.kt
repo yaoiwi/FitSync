@@ -12,6 +12,7 @@ import com.fitsync.feature.detail.AccountDetailScreen
 import com.fitsync.feature.detail.AccountsScreen
 import com.fitsync.feature.detail.ActivityDetailScreen
 import com.fitsync.feature.detail.CopyActivitiesScreen
+import com.fitsync.feature.detail.CopyHealthReportScreen
 import com.fitsync.feature.detail.CopyHealthScreen
 import com.fitsync.feature.detail.ExportScreen
 import com.fitsync.feature.detail.ImportScreen
@@ -29,6 +30,7 @@ sealed class Screen(val route: String) {
     data object Import : Screen("import")
     data object CopyActivities : Screen("copy-activities")
     data object CopyHealth : Screen("copy-health")
+    data object CopyHealthReport : Screen("copy-health/report")
     data object SyncLogs : Screen("sync-logs")
     data object Export : Screen("export")
 
@@ -108,7 +110,13 @@ fun FitSyncRoot() {
                 CopyActivitiesScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.CopyHealth.route) {
-                CopyHealthScreen(onBack = { navController.popBackStack() })
+                CopyHealthScreen(
+                    onBack = { navController.popBackStack() },
+                    onOpenReport = { navController.navigate(Screen.CopyHealthReport.route) },
+                )
+            }
+            composable(Screen.CopyHealthReport.route) {
+                CopyHealthReportScreen(onBack = { navController.popBackStack() })
             }
             composable(Screen.SyncLogs.route) {
                 SyncLogsScreen(onBack = { navController.popBackStack() })

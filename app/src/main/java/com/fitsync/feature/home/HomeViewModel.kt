@@ -12,6 +12,7 @@ import com.fitsync.data.db.SleepSessionEntity
 import com.fitsync.data.db.SleepStageEntity
 import com.fitsync.data.db.SyncLogEntity
 import com.fitsync.data.exporter.DataExporter
+import com.fitsync.data.health.CopyHealthReport
 import com.fitsync.data.settings.AccountAliasStore
 import com.fitsync.data.settings.CopyPacer
 import com.fitsync.data.settings.HealthCopyLedger
@@ -20,10 +21,13 @@ import com.fitsync.sync.SyncCoordinator
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -290,6 +294,16 @@ class HomeViewModel @Inject constructor(
 
     fun syncNow() = syncCoordinator.syncNow()
 
+    /** 只同步健康数据（日汇总、睡眠、心率），不发活动请求 */
+    fun syncHealthNow() = syncCoordinator.syncHealthNow()
+
+    /** 只同步运动活动，按下面设置的条数翻页 */
+    fun syncActivitiesNow() = syncCoordinator.syncActivitiesNow()
+
+    /** 一次「同步活动」拉多少条（20 / 50 / 100） */
+    val activityLimit: StateFlow<Int> = syncCoordinator.activityLimit
+    fun setActivityLimit(limit: Int) = syncCoordinator.setActivityLimit(limit)
+
     /** 本地限流冷却的剩余时间 / 连击次数，设置页用来显示「还有多久」 */
     fun rateLimitRemainingMs() = syncCoordinator.rateLimitRemainingMs()
     fun rateLimitStrikes() = syncCoordinator.rateLimitStrikes()
@@ -355,6 +369,63 @@ class HomeViewModel @Inject constructor(
     fun copyProgressOf(fromAccountId: Long?, toAccountId: Long?): HealthCopyLedger.Progress? {
         if (fromAccountId == null || toAccountId == null) return null
         return copyLedger.progress(fromAccountId, toAccountId)
+    }
+
+    /** 搬运体检页的状态：一次只加载一份，切换范围重新加载 */
+    data class CopyReportUi(
+        val report: CopyHealthReport.Summary? = null,
+        val loading: Boolean = false,
+        val error: String? = null,
+    )
+
+    private val _copyReport = MutableStateFlow(CopyReportUi())
+    val copyReport: StateFlow<CopyReportUi> = _copyReport.asStateFlow()
+
+    /**
+     * 生成「按天展开」的搬运体检。
+     *
+     * 台账和本地库都在 IO 侧读，一次只取一帧（[kotlinx.coroutines.flow.Flow.first]）：
+     * 体检页是看一眼就走的诊断页，不需要长期订阅两张表。
+     */
+    fun loadCopyReport(fromAccountId: Long?, toAccountId: Long?, span: Int) {
+        if (fromAccountId == null || toAccountId == null) {
+            _copyReport.value = CopyReportUi(error = "需要两个 Garmin 账号才能核对")
+            return
+        }
+        _copyReport.value = CopyReportUi(loading = true)
+        viewModelScope.launch {
+            runCatching {
+                val localDates = repository.observeDailySummaries(toAccountId).first()
+                    .filter { it.steps > 0 || it.distanceM > 0 || it.stressAvg > 0 || it.restingHr > 0 }
+                    .map { it.date }
+                    .toSet()
+                val localSleepDates = repository.observeSleepSessions(toAccountId).first()
+                    .map {
+                        Instant.ofEpochMilli(it.endTimeMs)
+                            .atZone(ZoneId.systemDefault())
+                            .toLocalDate()
+                            .toString()
+                    }
+                    .toSet()
+                CopyHealthReport.build(
+                    today = LocalDate.now(),
+                    span = span,
+                    records = copyLedger.records(fromAccountId, toAccountId),
+                    localDates = localDates,
+                    localSleepDates = localSleepDates,
+                )
+            }.onSuccess {
+                _copyReport.value = CopyReportUi(report = it)
+            }.onFailure {
+                _copyReport.value = CopyReportUi(
+                    error = "读取搬运记录失败：${it.message ?: it.javaClass.simpleName}",
+                )
+            }
+        }
+    }
+
+    fun clearCopyReport() {
+        _copyReport.value = CopyReportUi()
     }
 
     /**

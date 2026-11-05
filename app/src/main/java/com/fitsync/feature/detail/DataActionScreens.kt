@@ -324,6 +324,7 @@ private fun spanLabel(days: Int): String = when (days) {
 @Composable
 fun CopyHealthScreen(
     onBack: () -> Unit,
+    onOpenReport: () -> Unit = {},
     viewModel: HomeViewModel = hiltViewModel(),
 ) {
     val accounts by viewModel.accounts.collectAsState()
@@ -465,6 +466,17 @@ fun CopyHealthScreen(
                         )
                     }
                 }
+            }
+        }
+        item {
+            MiuixSectionTitle("核对")
+            MiuixCard {
+                MiuixRow(
+                    title = "搬运体检",
+                    summary = "按天核对：哪天有睡眠、哪天还在等手表补传、哪天是空包",
+                    showArrow = true,
+                    onClick = onOpenReport,
+                )
             }
         }
         item {
@@ -727,7 +739,7 @@ private fun exportFileName(ext: String): String = "fitsync-${TimeFmt.fileStamp()
 // ============================ 公共骨架 ============================
 
 @Composable
-private fun DataActionPage(
+internal fun DataActionPage(
     title: String,
     subtitle: String,
     onBack: () -> Unit,
