@@ -18,7 +18,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
+import com.fitsync.ui.theme.MiuixCanvas
 import com.fitsync.ui.theme.MiuixPrimary
+import com.fitsync.ui.theme.isMd3
 import top.yukonga.miuix.kmp.basic.MiuixScrollBehavior
 import top.yukonga.miuix.kmp.basic.PullToRefresh
 import top.yukonga.miuix.kmp.basic.Scaffold
@@ -66,10 +68,14 @@ fun HyperPage(
             // 顶部渐进模糊条（HyperIsland 的 BlurredBar）：列表从标题底下滚过时，
             // 越靠近状态栏越模糊，标题区保持可读。没有 RuntimeShader 时退化成竖向渐变。
             val backdrop = LocalGlassBackdrop.current
-            val surface = MiuixTheme.colorScheme.surface
+            // MD3 下顶栏要和正文同底色，否则深色模式会出现「顶栏比页面更黑」的色带
+            val surface = if (isMd3) MiuixCanvas else MiuixTheme.colorScheme.surface
             Box(
-                modifier = if (backdrop != null) {
-                    Modifier.progressiveTextureBlur(
+                modifier = when {
+                    // MD3：顶栏是实色 surface，不做模糊。Material 的顶栏本来就不透明，
+                    // 再叠一层渐进模糊会和下面的卡片分层打架
+                    isMd3 -> Modifier.background(surface)
+                    backdrop != null -> Modifier.progressiveTextureBlur(
                         backdrop = backdrop,
                         shape = RectangleShape,
                         blurRadius = 16f,
@@ -84,8 +90,7 @@ fun HyperPage(
                             ),
                         ),
                     )
-                } else {
-                    Modifier.background(
+                    else -> Modifier.background(
                         Brush.verticalGradient(
                             listOf(surface.copy(alpha = 0.96f), surface.copy(alpha = 0.72f)),
                         ),

@@ -33,6 +33,7 @@ import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixSummary
 import com.fitsync.ui.components.MiuixSegmentedControl
 import com.fitsync.ui.theme.ThemeModePref
+import com.fitsync.ui.theme.UiStyle
 
 // ============================ 设置 ============================
 
@@ -61,6 +62,8 @@ private fun cooldownLabel(ms: Long): String {
 internal fun SettingsTab(
     themeMode: String = ThemeModePref.FOLLOW,
     onThemeModeChange: (String) -> Unit = {},
+    uiStyle: UiStyle = UiStyle.Miuix,
+    onUiStyleChange: (UiStyle) -> Unit = {},
     floatingNavBar: Boolean = true,
     onFloatingNavBarChange: (Boolean) -> Unit = {},
     onOpenChangelog: () -> Unit = {},
@@ -109,6 +112,31 @@ internal fun SettingsTab(
         item {
             MiuixSectionTitle("外观")
             MiuixCard {
+                Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Text(
+                        text = "界面风格",
+                        fontSize = 16.sp,
+                        color = MiuiText1,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        text = "HyperOS 是圆角卡片 + 胶囊导航；Material 3 是分层卡片 + 标准导航栏。" +
+                            "换风格不影响深色设置",
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        color = MiuixSummary,
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    MiuixSegmentedControl(
+                        options = listOf("HyperOS", "Material 3"),
+                        selectedIndex = if (uiStyle == UiStyle.Md3) 1 else 0,
+                        onSelect = {
+                            onUiStyleChange(if (it == 1) UiStyle.Md3 else UiStyle.Miuix)
+                            Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                        },
+                    )
+                }
+                MiuixDivider()
                 Column(modifier = Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
                     Text(
                         text = "深色模式",

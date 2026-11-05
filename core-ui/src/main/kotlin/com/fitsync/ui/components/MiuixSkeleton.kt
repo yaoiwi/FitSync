@@ -19,6 +19,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button as Md3Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card as Md3Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.HorizontalDivider as Md3HorizontalDivider
+import androidx.compose.material3.Icon as Md3Icon
+import androidx.compose.material3.MaterialTheme as Md3Theme
+import androidx.compose.material3.NavigationBar as Md3NavigationBar
+import androidx.compose.material3.NavigationBarItem as Md3NavigationBarItem
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Switch as Md3Switch
+import androidx.compose.material3.Text as Md3Text
+import androidx.compose.material3.TextButton as Md3TextButton
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
 import androidx.compose.runtime.Composable
@@ -34,15 +49,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fitsync.ui.theme.MiuiText1
+import com.fitsync.ui.theme.MiuiText2
 import com.fitsync.ui.theme.MiuixAction
 import com.fitsync.ui.theme.MiuixCardSurface
 import com.fitsync.ui.theme.MiuixDivider
 import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
+import com.fitsync.ui.theme.MiuixPrimaryContainer
 import com.fitsync.ui.theme.MiuixSummary
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Switch
+import com.fitsync.ui.theme.isMd3
 
 /**
  * Miuix / HyperOS 风格的页面骨架。
@@ -69,6 +87,20 @@ fun MiuixCard(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit,
 ) {
+    // MD3：填充式卡片（平、无阴影），圆角 16dp，颜色用 surfaceContainerLow 一档，
+    // 在 surface 背景上刚好能分出层次，又不至于像描边卡那样显重。
+    if (isMd3) {
+        Md3Card(
+            modifier = modifier
+                .padding(horizontal = 12.dp, vertical = 5.dp)
+                .fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MiuixCardSurface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+            content = content,
+        )
+        return
+    }
     // 直接用官方 Card（HyperIsland 同款）：圆角、底色、按压反馈都由 Miuix 控制；
     // insideMargin 归零，因为我们的行内容自己带 18dp 内边距。
     //
@@ -90,6 +122,15 @@ fun MiuixCard(
 /** 卡片内分隔线：左右各缩进 18dp，与文字对齐 */
 @Composable
 fun MiuixDivider(startIndent: Int = 18) {
+    if (isMd3) {
+        // MD3 的分隔线是 1dp 的 outlineVariant，比 HyperOS 的 0.5dp 要实一点
+        Md3HorizontalDivider(
+            modifier = Modifier.padding(start = startIndent.dp),
+            thickness = 1.dp,
+            color = MiuixDivider,
+        )
+        return
+    }
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -118,6 +159,51 @@ fun MiuixRow(
     onClick: (() -> Unit)? = null,
 ) {
     val tick = rememberTick()
+    // MD3：列表项用 72dp 基准高、标题 bodyLarge、摘要 bodyMedium；
+    // 点击涟漪交给 clickable，和 Miuix 的 BasicComponent 分开实现。
+    if (isMd3) {
+        Row(
+            modifier = modifier
+                .fillMaxWidth()
+                .clickable(enabled = onClick != null) {
+                    tick()
+                    onClick?.invoke()
+                }
+                .padding(horizontal = 18.dp, vertical = 15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            if (leading != null) {
+                leading()
+                Spacer(Modifier.width(16.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Md3Text(
+                    text = title,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    color = MiuiText1,
+                )
+                if (!summary.isNullOrBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Md3Text(
+                        text = summary,
+                        fontSize = 13.sp,
+                        lineHeight = 17.sp,
+                        color = MiuixSummary,
+                    )
+                }
+            }
+            if (trailing != null) {
+                Spacer(Modifier.width(12.dp))
+                trailing()
+            }
+            if (showArrow) {
+                Spacer(Modifier.width(6.dp))
+                Md3Text(text = "›", fontSize = 20.sp, color = MiuixAction)
+            }
+        }
+        return
+    }
     BasicComponent(
         title = title,
         modifier = modifier,
@@ -173,6 +259,29 @@ fun MiuixSegmentedControl(
     modifier: Modifier = Modifier,
 ) {
     val tick = rememberTick()
+    // MD3：分段按钮带描边，选中项填充 primaryContainer，未选中透明
+    if (isMd3) {
+        SingleChoiceSegmentedButtonRow(modifier = modifier.fillMaxWidth()) {
+            options.forEachIndexed { index, label ->
+                SegmentedButton(
+                    selected = index == selectedIndex,
+                    onClick = {
+                        if (index != selectedIndex) tick()
+                        onSelect(index)
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(index = index, count = options.size),
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = MiuixPrimaryContainer,
+                        activeContentColor = Md3Theme.colorScheme.onPrimaryContainer,
+                        inactiveContainerColor = Color.Transparent,
+                        inactiveContentColor = MiuiText2,
+                    ),
+                    label = { Md3Text(text = label, fontSize = 14.sp) },
+                )
+            }
+        }
+        return
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -216,6 +325,18 @@ fun MiuixSwitch(
     enabled: Boolean = true,
 ) {
     val tick = rememberTick()
+    if (isMd3) {
+        Md3Switch(
+            checked = checked,
+            onCheckedChange = {
+                tick()
+                onCheckedChange(it)
+            },
+            modifier = modifier,
+            enabled = enabled,
+        )
+        return
+    }
     Switch(
         checked = checked,
         onCheckedChange = {
@@ -232,6 +353,18 @@ fun MiuixSwitch(
 /** 分组标题，对应 Miuix 的 SmallTitle */
 @Composable
 fun MiuixSectionTitle(text: String, modifier: Modifier = Modifier) {
+    // MD3：分组标题用 primary 色的 labelLarge，是设置页里少数带颜色的文字
+    if (isMd3) {
+        Md3Text(
+            text = text,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.4.sp,
+            color = MiuixPrimary,
+            modifier = modifier.padding(start = 30.dp, top = 22.dp, bottom = 8.dp),
+        )
+        return
+    }
     Text(
         text = text,
         fontSize = 13.sp,
@@ -256,6 +389,50 @@ fun MiuixLargeHeader(
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     val scale = (1f - scrollOffset.coerceIn(0f, 1f) * 0.12f)
+    // MD3：headlineMedium 28sp / Regular，左 16dp，右侧操作与标题基线对齐
+    if (isMd3) {
+        Column(
+            modifier = Modifier.padding(
+                start = if (navigationIcon != null) 4.dp else 16.dp,
+                end = 12.dp,
+                top = 14.dp,
+                bottom = 4.dp,
+            ),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (navigationIcon != null) {
+                    navigationIcon()
+                    Spacer(Modifier.width(2.dp))
+                }
+                Md3Text(
+                    text = title,
+                    fontSize = 28.sp,
+                    fontWeight = FontWeight.Normal,
+                    color = MiuiText1,
+                    letterSpacing = 0.sp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            transformOrigin =
+                                androidx.compose.ui.graphics.TransformOrigin(0f, 0.5f)
+                        },
+                )
+                actions()
+            }
+            if (!subtitle.isNullOrBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Md3Text(
+                    text = subtitle,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MiuixSummary,
+                )
+            }
+        }
+        return
+    }
     Column(
         modifier = Modifier.padding(
             // 有返回箭头时左边距收窄，箭头本身带内边距，避免标题被挤到屏幕中间
@@ -306,6 +483,35 @@ fun MiuixPrimaryButton(
 ) {
     val bg = if (enabled) MiuixPrimary else MiuixPrimary.copy(alpha = 0.35f)
     val tick = rememberTick()
+    // MD3：filled button，全圆角、48dp 高，文字 onPrimary
+    if (isMd3) {
+        Md3Button(
+            onClick = {
+                tick()
+                onClick()
+            },
+            modifier = modifier
+                .fillMaxWidth()
+                .height(48.dp),
+            enabled = enabled && !loading,
+            shape = RoundedCornerShape(24.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MiuixPrimary,
+                contentColor = Md3Theme.colorScheme.onPrimary,
+            ),
+        ) {
+            if (loading) {
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier.size(20.dp),
+                    color = Md3Theme.colorScheme.onPrimary,
+                    strokeWidth = 2.dp,
+                )
+            } else {
+                Md3Text(text = text, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            }
+        }
+        return
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -340,6 +546,27 @@ fun MiuixTextButton(
     color: Color? = null,
 ) {
     val tick = rememberTick()
+    if (isMd3) {
+        Md3TextButton(
+            onClick = {
+                tick()
+                onClick()
+            },
+            modifier = modifier,
+            enabled = enabled,
+        ) {
+            Md3Text(
+                text = text,
+                fontSize = 15.sp,
+                color = color ?: if (enabled) {
+                    Md3Theme.colorScheme.primary
+                } else {
+                    MiuixSummary
+                },
+            )
+        }
+        return
+    }
     Box(
         modifier = modifier
             .height(48.dp)
@@ -374,6 +601,30 @@ fun MiuixBottomNav(
     onSelect: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // MD3：标准贴底导航栏，选中项由 M3 自己画指示器胶囊，不做玻璃效果
+    if (isMd3) {
+        Md3NavigationBar(
+            modifier = modifier.fillMaxWidth(),
+            containerColor = MiuixCardSurface,
+            tonalElevation = 0.dp,
+        ) {
+            items.forEachIndexed { index, item ->
+                Md3NavigationBarItem(
+                    selected = index == selectedIndex,
+                    onClick = { onSelect(index) },
+                    icon = {
+                        Md3Icon(
+                            imageVector = item.icon,
+                            contentDescription = item.label,
+                            modifier = Modifier.size(22.dp),
+                        )
+                    },
+                    label = { Md3Text(text = item.label, fontSize = 11.sp) },
+                )
+            }
+        }
+        return
+    }
     val shape = RoundedCornerShape(31.dp)
     val glassTint = if (isSystemInDarkTheme()) {
         Color(0xFF1C1C1E).copy(alpha = 0.55f)

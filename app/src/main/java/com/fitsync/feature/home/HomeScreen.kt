@@ -50,7 +50,9 @@ import com.fitsync.ui.components.Haptics
 import com.fitsync.ui.components.LiquidGlassNavigationBar
 import com.fitsync.ui.components.LiquidGlassNavigationItem
 import com.fitsync.ui.components.MiuixActionDialog
+import com.fitsync.ui.components.MiuixBottomNav
 import com.fitsync.ui.components.MiuixInputDialog
+import com.fitsync.ui.components.MiuixNavItem
 import com.fitsync.ui.components.MiuixPrimaryButton
 import com.fitsync.ui.components.MiuixActionDialog
 import com.fitsync.ui.theme.FitSyncTheme
@@ -58,6 +60,8 @@ import com.fitsync.ui.theme.FloatingNavBarPref
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixCanvas
 import com.fitsync.ui.theme.MiuixPrimary
+import com.fitsync.ui.theme.UiStyle
+import com.fitsync.ui.theme.UiStylePref
 import com.fitsync.ui.theme.MiuixSummary
 import com.fitsync.ui.theme.ThemeModePref
 
@@ -90,6 +94,9 @@ fun HomeScreen(
         .collectAsState(initial = ThemeModePref.FOLLOW)
     val floatingNavBar by remember(context) { FloatingNavBarPref.flow(context) }
         .collectAsState(initial = FloatingNavBarPref.isEnabled(context))
+    // 界面风格：MD3 时底部换成标准贴底导航栏，不再做液态玻璃
+    val uiStyle by remember(context) { UiStylePref.flow(context) }
+        .collectAsState(initial = UiStylePref.current(context))
     val accounts by viewModel.accounts.collectAsState()
     val accountsLoaded by viewModel.accountsLoaded.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
@@ -176,20 +183,35 @@ fun HomeScreen(
                 GlassHost(
                     modifier = Modifier.fillMaxSize(),
                     // 覆盖悬浮导航栏及其底部安全区，避免下拉刷新时正文移动导致玻璃变色
-                    bottomScrimHeight = 140.dp,
+                    bottomScrimHeight = if (uiStyle == UiStyle.Md3) 0.dp else 140.dp,
                     overlay = {
-                        LiquidGlassNavigationBar(
-                            selectedTabIndex = { tab },
-                            onTabSelected = { tab = it },
-                            items = listOf(
-                                LiquidGlassNavigationItem(Icons.Filled.Home, "概览"),
-                                LiquidGlassNavigationItem(Icons.Filled.List, "活动"),
-                                LiquidGlassNavigationItem(Icons.Filled.Person, "账号"),
-                                LiquidGlassNavigationItem(Icons.Filled.Settings, "设置"),
-                            ),
-                            modifier = Modifier.align(Alignment.BottomCenter),
-                            floating = floatingNavBar,
-                        )
+                        if (uiStyle == UiStyle.Md3) {
+                            // MD3：标准导航栏贴底，不做 backdrop 采样
+                            MiuixBottomNav(
+                                items = listOf(
+                                    MiuixNavItem(label = "概览", icon = Icons.Filled.Home),
+                                    MiuixNavItem(label = "活动", icon = Icons.Filled.List),
+                                    MiuixNavItem(label = "账号", icon = Icons.Filled.Person),
+                                    MiuixNavItem(label = "设置", icon = Icons.Filled.Settings),
+                                ),
+                                selectedIndex = tab,
+                                onSelect = { tab = it },
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                            )
+                        } else {
+                            LiquidGlassNavigationBar(
+                                selectedTabIndex = { tab },
+                                onTabSelected = { tab = it },
+                                items = listOf(
+                                    LiquidGlassNavigationItem(Icons.Filled.Home, "概览"),
+                                    LiquidGlassNavigationItem(Icons.Filled.List, "活动"),
+                                    LiquidGlassNavigationItem(Icons.Filled.Person, "账号"),
+                                    LiquidGlassNavigationItem(Icons.Filled.Settings, "设置"),
+                                ),
+                                modifier = Modifier.align(Alignment.BottomCenter),
+                                floating = floatingNavBar,
+                            )
+                        }
                     },
                 ) {
                     when (tab) {
@@ -252,6 +274,8 @@ fun HomeScreen(
                             else -> SettingsTab(
                                 themeMode = themeMode,
                                 onThemeModeChange = { ThemeModePref.set(context, it) },
+                                uiStyle = uiStyle,
+                                onUiStyleChange = { UiStylePref.set(context, it) },
                                 floatingNavBar = floatingNavBar,
                                 onFloatingNavBarChange = { FloatingNavBarPref.set(context, it) },
                                 onOpenChangelog = onOpenChangelog,

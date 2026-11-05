@@ -41,6 +41,7 @@ import com.fitsync.ui.theme.MiuixError
 import com.fitsync.ui.theme.MiuixGroupBg
 import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.MiuixSummary
+import com.fitsync.ui.theme.isMd3
 
 /**
  * HyperOS 风格对话框外壳：26dp 圆角卡片、标题 + 说明 + 内容 + 底部按钮行。
@@ -63,19 +64,24 @@ private fun DialogShell(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 32.dp)
-                .clip(RoundedCornerShape(26.dp))
+                .padding(horizontal = if (isMd3) 28.dp else 32.dp)
+                .clip(RoundedCornerShape(if (isMd3) 28.dp else 26.dp))
                 .background(MiuixCardSurface)
-                .padding(start = 22.dp, end = 22.dp, top = 22.dp, bottom = 12.dp),
+                .padding(
+                    start = if (isMd3) 24.dp else 22.dp,
+                    end = if (isMd3) 24.dp else 22.dp,
+                    top = if (isMd3) 24.dp else 22.dp,
+                    bottom = if (isMd3) 12.dp else 12.dp,
+                ),
         ) {
             Text(
                 text = title,
-                fontSize = 18.sp,
-                fontWeight = FontWeight.SemiBold,
+                fontSize = if (isMd3) 22.sp else 18.sp,
+                fontWeight = if (isMd3) FontWeight.Normal else FontWeight.SemiBold,
                 color = MiuiText1,
             )
             if (!message.isNullOrBlank()) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(if (isMd3) 14.dp else 8.dp))
                 Text(
                     text = message,
                     fontSize = 13.sp,

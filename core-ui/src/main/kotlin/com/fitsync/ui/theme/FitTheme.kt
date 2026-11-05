@@ -104,6 +104,97 @@ private val DarkPalette = FitPalette(
 
 private val LocalFitPalette = staticCompositionLocalOf { LightPalette }
 
+// ============================ Material 3 色板 ============================
+// 同一套语义 token 再做一份 M3 取值：底色往 surfaceContainer 分层靠，
+// 正文用 onSurface / onSurfaceVariant，分隔线用 outlineVariant。
+// 这样页面代码一行不用改，切风格只换这一层。
+
+private val Md3LightPalette = FitPalette(
+    bg = Color(0xFFF8F9FF),
+    card = Color(0xFFF2F3FA),
+    text1 = Color(0xFF1A1C1E),
+    text2 = Color(0xFF43474E),
+    text3 = Color(0xFF73777F),
+    accent = Color(0xFF005AC1),
+    green = Color(0xFF146C2E),
+    orange = Color(0xFF8B5000),
+    red = Color(0xFFBA1A1A),
+    yellow = Color(0xFF7A5900),
+    primary = Color(0xFF005AC1),
+    primaryContainer = Color(0xFFD8E2FF),
+    canvas = Color(0xFFF8F9FF),
+    cardSurface = Color(0xFFFFFFFF),
+    summary = Color(0xFF43474E),
+    action = Color(0xFF73777F),
+    divider = Color(0xFFC3C7CF),
+    outline = Color(0xFF73777F),
+    error = Color(0xFFBA1A1A),
+    groupBg = Color(0xFFE1E2EC),
+    statusGreen = Color(0xFF146C2E),
+)
+
+private val Md3DarkPalette = FitPalette(
+    bg = Color(0xFF111318),
+    card = Color(0xFF1D2024),
+    text1 = Color(0xFFE2E2E6),
+    text2 = Color(0xFFC3C7CF),
+    text3 = Color(0xFF8D9199),
+    accent = Color(0xFFADC6FF),
+    green = Color(0xFF8CD5A0),
+    orange = Color(0xFFFFB86B),
+    red = Color(0xFFFFB4AB),
+    yellow = Color(0xFFE8C46A),
+    primary = Color(0xFFADC6FF),
+    primaryContainer = Color(0xFF004494),
+    canvas = Color(0xFF111318),
+    cardSurface = Color(0xFF191C20),
+    summary = Color(0xFFC3C7CF),
+    action = Color(0xFF8D9199),
+    divider = Color(0xFF43474E),
+    outline = Color(0xFF8D9199),
+    error = Color(0xFFFFB4AB),
+    groupBg = Color(0xFF43474E),
+    statusGreen = Color(0xFF8CD5A0),
+)
+
+private val Md3LightScheme = lightColorScheme(
+    primary = Color(0xFF005AC1),
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFFD8E2FF),
+    onPrimaryContainer = Color(0xFF001A41),
+    secondary = Color(0xFF565E71),
+    onSecondary = Color.White,
+    background = Color(0xFFF8F9FF),
+    onBackground = Color(0xFF1A1C1E),
+    surface = Color(0xFFF8F9FF),
+    onSurface = Color(0xFF1A1C1E),
+    surfaceVariant = Color(0xFFE1E2EC),
+    onSurfaceVariant = Color(0xFF43474E),
+    outline = Color(0xFF73777F),
+    outlineVariant = Color(0xFFC3C7CF),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
+)
+
+private val Md3DarkScheme = darkColorScheme(
+    primary = Color(0xFFADC6FF),
+    onPrimary = Color(0xFF002E69),
+    primaryContainer = Color(0xFF004494),
+    onPrimaryContainer = Color(0xFFD8E2FF),
+    secondary = Color(0xFFBEC6DC),
+    onSecondary = Color(0xFF283141),
+    background = Color(0xFF111318),
+    onBackground = Color(0xFFE2E2E6),
+    surface = Color(0xFF111318),
+    onSurface = Color(0xFFE2E2E6),
+    surfaceVariant = Color(0xFF43474E),
+    onSurfaceVariant = Color(0xFFC3C7CF),
+    outline = Color(0xFF8D9199),
+    outlineVariant = Color(0xFF43474E),
+    error = Color(0xFFFFB4AB),
+    onError = Color(0xFF690005),
+)
+
 @Composable
 fun FitSyncTheme(
     darkTheme: Boolean? = null,
@@ -115,9 +206,21 @@ fun FitSyncTheme(
         .collectAsState(initial = ThemeModePref.FOLLOW)
     val isDark = darkTheme ?: resolveDarkMode(mode, isSystemInDarkTheme())
 
-    val palette = if (isDark) DarkPalette else LightPalette
-    val scheme = if (isDark) {
-        darkColorScheme(
+    // 界面风格与深浅色正交：换风格不动深色设置，换深色也不动风格
+    val style by remember(context) { UiStylePref.flow(context) }
+        .collectAsState(initial = UiStylePref.current(context))
+
+    val palette = when {
+        style == UiStyle.Md3 && isDark -> Md3DarkPalette
+        style == UiStyle.Md3 -> Md3LightPalette
+        isDark -> DarkPalette
+        else -> LightPalette
+    }
+
+    val scheme = when {
+        style == UiStyle.Md3 && isDark -> Md3DarkScheme
+        style == UiStyle.Md3 -> Md3LightScheme
+        isDark -> darkColorScheme(
             primary = palette.accent,
             onPrimary = Color.White,
             background = palette.canvas,
@@ -128,8 +231,7 @@ fun FitSyncTheme(
             onSurfaceVariant = palette.text2,
             outline = palette.divider,
         )
-    } else {
-        lightColorScheme(
+        else -> lightColorScheme(
             primary = Color(0xFF4C8BF5),
             background = Color(0xFFF5F7FA),
             surface = Color.White,
@@ -139,10 +241,14 @@ fun FitSyncTheme(
         )
     }
 
-    CompositionLocalProvider(LocalFitPalette provides palette) {
+    CompositionLocalProvider(
+        LocalFitPalette provides palette,
+        LocalUiStyle provides style,
+    ) {
         // 官方 Miuix 主题（与 HyperIsland 3.2.1 同版本 0.9.4）：
         // 官方组件（Card / BasicComponent / Switch / Text…）从这里取色，
         // 液态玻璃的 surface 采样色也与它保持一致。
+        // MD3 风格下这层仍然包着，但组件不再取它的值，切回去时不需要重新组合。
         MiuixTheme(
             colors = if (isDark) miuixDarkColors() else miuixLightColors(),
             textStyles = defaultTextStyles(),
