@@ -8,6 +8,8 @@ import android.os.VibratorManager
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
+import com.fitsync.ui.theme.UiStyle
+import com.fitsync.ui.theme.UiStylePref
 
 /**
  * 触感反馈。
@@ -44,6 +46,9 @@ object Haptics {
     }
 
     fun perform(context: Context, kind: HapticFeedback = HapticFeedback.Tick) {
+        // 触感反馈只属于 HyperOS 风格：Material 3 下设置里没有这个开关，
+        // 若这里照旧震动，用户就找不到关掉它的入口，所以直接不震。
+        if (UiStylePref.current(context) == UiStyle.Md3) return
         if (!isEnabled(context)) return
         val vibrator = resolveVibrator(context) ?: return
         if (!vibrator.hasVibrator()) return

@@ -121,7 +121,7 @@ internal fun SettingsTab(
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = "HyperOS 是圆角卡片 + 胶囊导航；Material 3 是分层卡片 + 标准导航栏。" +
-                            "换风格不影响深色设置",
+                            "换风格不影响深色设置。悬浮导航栏与触感反馈只在 HyperOS 下提供",
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         color = MiuixSummary,
@@ -157,39 +157,44 @@ internal fun SettingsTab(
                         onSelect = { onThemeModeChange(themeCodes[it]) },
                     )
                 }
-                MiuixDivider()
-                MiuixRow(
-                    title = "悬浮导航栏",
-                    summary = if (floatingNavBar) {
-                        "液态玻璃悬浮样式，可左右拖动切换"
-                    } else {
-                        "当前为贴底标准导航栏"
-                    },
-                    trailing = {
-                        MiuixSwitch(
-                            checked = floatingNavBar,
-                            onCheckedChange = { enabled ->
-                                onFloatingNavBarChange(enabled)
-                                Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                            },
-                        )
-                    },
-                )
-                MiuixDivider()
-                MiuixRow(
-                    title = "触感反馈",
-                    summary = "点击、切换、完成时轻震一下",
-                    trailing = {
-                        MiuixSwitch(
-                            checked = hapticsOn,
-                            onCheckedChange = { enabled ->
-                                hapticsOn = enabled
-                                Haptics.setEnabled(settingsContext, enabled)
-                                if (enabled) Haptics.perform(settingsContext, HapticFeedback.Confirm)
-                            },
-                        )
-                    },
-                )
+                // 这两项只有 HyperOS/Miuix 侧实现：MD3 用贴底标准导航栏，
+                // 行点击也不走 Haptics。留在 MD3 下只会「拨了没反应」，
+                // 所以整块隐藏，切回 HyperOS 时原来的选择还在。
+                if (uiStyle == UiStyle.Miuix) {
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "悬浮导航栏",
+                        summary = if (floatingNavBar) {
+                            "液态玻璃悬浮样式，可左右拖动切换"
+                        } else {
+                            "当前为贴底标准导航栏"
+                        },
+                        trailing = {
+                            MiuixSwitch(
+                                checked = floatingNavBar,
+                                onCheckedChange = { enabled ->
+                                    onFloatingNavBarChange(enabled)
+                                    Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                                },
+                            )
+                        },
+                    )
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "触感反馈",
+                        summary = "点击、切换、完成时轻震一下",
+                        trailing = {
+                            MiuixSwitch(
+                                checked = hapticsOn,
+                                onCheckedChange = { enabled ->
+                                    hapticsOn = enabled
+                                    Haptics.setEnabled(settingsContext, enabled)
+                                    if (enabled) Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                                },
+                            )
+                        },
+                    )
+                }
             }
         }
 

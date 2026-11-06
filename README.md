@@ -37,13 +37,14 @@
 - 上滑时大标题折叠、列表两端弹性回弹、顶栏渐进模糊
 - 四个页签：概览 / 活动 / 账号 / 设置；触感反馈可关闭
 - **双界面风格**：设置 → 外观里可在 HyperOS（Miuix）与 Material Design 3 之间切换，
-  两套各有独立的浅色/深色色板，切换即时生效、不用重启
+  两套各有独立的浅色/深色色板，切换即时生效、不用重启。
+  悬浮导航栏与触感反馈属于 HyperOS 专属，切到 Material 3 后这两项自动隐藏
 
 > 液态玻璃依赖 Android 13（API 33）的 RuntimeShader；更低版本自动降级为半透明 + 高光描边。
 
 ## 📖 使用文档
 
-1. 打开 [Releases](https://github.com/yaoiwi/FitSync/releases/latest)，下载 `FitSync-1.8.0.apk`（覆盖安装即可，配置会保留）。
+1. 打开 [Releases](https://github.com/yaoiwi/FitSync/releases/latest)，下载 `FitSync-1.8.1.apk`（覆盖安装即可，配置会保留）。
 2. 打开 App，点右上角「添加账号」，登录 Garmin 中国区或国际区（支持 MFA）
 3. 首页下拉同步，第一次会补最近 7 天；之后打开即同步，后台每 6 小时一次
 4. 两个区都登录后，可在「账号 → 数据」里复制活动、搬运健康数据、导出本地记录；账号列表长按任意一行即可拖动排序
