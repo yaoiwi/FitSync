@@ -2,6 +2,8 @@ package com.fitsync.ui.theme
 
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -109,7 +111,7 @@ private val LocalFitPalette = staticCompositionLocalOf { LightPalette }
 // 正文用 onSurface / onSurfaceVariant，分隔线用 outlineVariant。
 // 这样页面代码一行不用改，切风格只换这一层。
 
-private val Md3LightPalette = FitPalette(
+internal val Md3LightPalette = FitPalette(
     bg = Color(0xFFF8F9FF),
     card = Color(0xFFF2F3FA),
     text1 = Color(0xFF1A1C1E),
@@ -133,7 +135,7 @@ private val Md3LightPalette = FitPalette(
     statusGreen = Color(0xFF146C2E),
 )
 
-private val Md3DarkPalette = FitPalette(
+internal val Md3DarkPalette = FitPalette(
     bg = Color(0xFF111318),
     card = Color(0xFF1D2024),
     text1 = Color(0xFFE2E2E6),
@@ -210,7 +212,25 @@ fun FitSyncTheme(
     val style by remember(context) { UiStylePref.flow(context) }
         .collectAsState(initial = UiStylePref.current(context))
 
+    // 莫奈取色只服务 MD3：HyperOS 那套是固定蓝灰 + 液态玻璃，加壁纸色反而打架
+    val monetOn by remember(context) { MonetPref.flow(context) }
+        .collectAsState(initial = MonetPref.isEnabled(context))
+    val useMonet = style == UiStyle.Md3 && monetOn && MonetPref.isSupported()
+
+    // 动态色板读系统资源，没必要每次重组都重建；深浅色或开关变了才重算。
+    // 换壁纸走的是 Activity 重建，所以不需要额外监听壁纸广播。
+    val dynamic = remember(context, isDark, useMonet) {
+        if (!useMonet) {
+            null
+        } else if (isDark) {
+            dynamicDarkColorScheme(context)
+        } else {
+            dynamicLightColorScheme(context)
+        }
+    }
+
     val palette = when {
+        dynamic != null -> monetPalette(dynamic, isDark)
         style == UiStyle.Md3 && isDark -> Md3DarkPalette
         style == UiStyle.Md3 -> Md3LightPalette
         isDark -> DarkPalette
@@ -218,6 +238,7 @@ fun FitSyncTheme(
     }
 
     val scheme = when {
+        dynamic != null -> dynamic
         style == UiStyle.Md3 && isDark -> Md3DarkScheme
         style == UiStyle.Md3 -> Md3LightScheme
         isDark -> darkColorScheme(

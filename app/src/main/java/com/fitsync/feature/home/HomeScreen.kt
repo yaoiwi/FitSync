@@ -63,6 +63,7 @@ import com.fitsync.ui.theme.MiuixPrimary
 import com.fitsync.ui.theme.UiStyle
 import com.fitsync.ui.theme.UiStylePref
 import com.fitsync.ui.theme.MiuixSummary
+import com.fitsync.ui.theme.MonetPref
 import com.fitsync.ui.theme.ThemeModePref
 
 /**
@@ -97,6 +98,9 @@ fun HomeScreen(
     // 界面风格：MD3 时底部换成标准贴底导航栏，不再做液态玻璃
     val uiStyle by remember(context) { UiStylePref.flow(context) }
         .collectAsState(initial = UiStylePref.current(context))
+    // 莫奈取色：开关一改，FitSyncTheme 里的动态色板立即重算
+    val monetEnabled by remember(context) { MonetPref.flow(context) }
+        .collectAsState(initial = MonetPref.isEnabled(context))
     val accounts by viewModel.accounts.collectAsState()
     val accountsLoaded by viewModel.accountsLoaded.collectAsState()
     val dashboard by viewModel.dashboard.collectAsState()
@@ -276,6 +280,8 @@ fun HomeScreen(
                                 onThemeModeChange = { ThemeModePref.set(context, it) },
                                 uiStyle = uiStyle,
                                 onUiStyleChange = { UiStylePref.set(context, it) },
+                                monetEnabled = monetEnabled,
+                                onMonetEnabledChange = { MonetPref.set(context, it) },
                                 floatingNavBar = floatingNavBar,
                                 onFloatingNavBarChange = { FloatingNavBarPref.set(context, it) },
                                 onOpenChangelog = onOpenChangelog,

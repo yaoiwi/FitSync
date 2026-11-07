@@ -32,6 +32,7 @@ import com.fitsync.ui.components.MiuixSwitch
 import com.fitsync.ui.theme.MiuiText1
 import com.fitsync.ui.theme.MiuixSummary
 import com.fitsync.ui.components.MiuixSegmentedControl
+import com.fitsync.ui.theme.MonetPref
 import com.fitsync.ui.theme.ThemeModePref
 import com.fitsync.ui.theme.UiStyle
 
@@ -64,6 +65,8 @@ internal fun SettingsTab(
     onThemeModeChange: (String) -> Unit = {},
     uiStyle: UiStyle = UiStyle.Miuix,
     onUiStyleChange: (UiStyle) -> Unit = {},
+    monetEnabled: Boolean = false,
+    onMonetEnabledChange: (Boolean) -> Unit = {},
     floatingNavBar: Boolean = true,
     onFloatingNavBarChange: (Boolean) -> Unit = {},
     onOpenChangelog: () -> Unit = {},
@@ -121,7 +124,8 @@ internal fun SettingsTab(
                     Spacer(Modifier.height(4.dp))
                     Text(
                         text = "HyperOS 是圆角卡片 + 胶囊导航；Material 3 是分层卡片 + 标准导航栏。" +
-                            "换风格不影响深色设置。悬浮导航栏与触感反馈只在 HyperOS 下提供",
+                            "换风格不影响深色设置。悬浮导航栏与触感反馈只在 HyperOS 下提供，" +
+                            "莫奈取色只在 Material 3 下提供",
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         color = MiuixSummary,
@@ -133,6 +137,25 @@ internal fun SettingsTab(
                         onSelect = {
                             onUiStyleChange(if (it == 1) UiStyle.Md3 else UiStyle.Miuix)
                             Haptics.perform(settingsContext, HapticFeedback.Confirm)
+                        },
+                    )
+                }
+                // 莫奈取色是 Material 3 的能力，HyperOS 风格没有这回事；
+                // Android 12 以下也没有系统动态色资源，直接不显示，避免「开了没反应」。
+                if (uiStyle == UiStyle.Md3 && MonetPref.isSupported()) {
+                    MiuixDivider()
+                    MiuixRow(
+                        title = "莫奈取色",
+                        summary = if (monetEnabled) {
+                            "已跟随壁纸：主色、卡片与背景都由系统配色生成，换壁纸会跟着变"
+                        } else {
+                            "用壁纸颜色替代默认蓝色，只作用于 Material 3 风格"
+                        },
+                        trailing = {
+                            MiuixSwitch(
+                                checked = monetEnabled,
+                                onCheckedChange = onMonetEnabledChange,
+                            )
                         },
                     )
                 }

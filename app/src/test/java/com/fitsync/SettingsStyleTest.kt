@@ -54,6 +54,8 @@ class SettingsStyleTest {
         // 外观卡其余内容仍在，说明不是整页没渲染
         composeRule.onNodeWithText("界面风格").assertIsDisplayed()
         composeRule.onNodeWithText("深色模式").assertIsDisplayed()
+        // 莫奈取色是 MD3 独有，入口必须出现
+        composeRule.onNodeWithText("莫奈取色").assertIsDisplayed()
 
         assertEquals(
             0,
@@ -62,6 +64,17 @@ class SettingsStyleTest {
         assertEquals(
             0,
             composeRule.onAllNodesWithText("触感反馈").fetchSemanticsNodes().size,
+        )
+    }
+
+    @Test
+    fun `HyperOS 下不出现莫奈取色`() {
+        render(UiStyle.Miuix)
+
+        composeRule.onNodeWithText("界面风格").assertIsDisplayed()
+        assertEquals(
+            0,
+            composeRule.onAllNodesWithText("莫奈取色").fetchSemanticsNodes().size,
         )
     }
 }
